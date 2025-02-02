@@ -45,8 +45,8 @@ addCommandAlias("mimaCheck", "+zioSchemaCirce/mimaReportBinaryIssues")
 lazy val root = project
   .in(file("."))
   .settings(
-    name           := "zio-schema-circe",
-    publish / skip := true,
+    name                  := "zio-schema-circe",
+    publish / skip        := true,
     mimaPreviousArtifacts := Set.empty,
   )
   .aggregate(
