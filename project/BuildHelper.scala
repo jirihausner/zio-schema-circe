@@ -3,19 +3,18 @@ import com.typesafe.tools.mima.core.ProblemFilters._
 import com.typesafe.tools.mima.plugin.MimaKeys._
 import org.snakeyaml.engine.v2.api.{Load, LoadSettings}
 import sbt._
-import sbt.Keys.{name, organization}
-import Keys._
-import sbtcrossproject.CrossPlugin.autoImport._
+import sbt.Keys._
 import sbtbuildinfo._
-import BuildInfoKeys._
+import sbtbuildinfo.BuildInfoKeys._
+import sbtcrossproject.CrossPlugin.autoImport._
+import sbtdynver.DynVerPlugin.autoImport.previousStableVersion
 import scalafix.sbt.ScalafixPlugin.autoImport._
 import scalanativecrossproject.NativePlatform
 
-import scala.scalanative.build.{GC, Mode}
-import scala.scalanative.sbtplugin.ScalaNativePlugin.autoImport.nativeConfig
-
 import java.util.{List => JList, Map => JMap}
 import scala.jdk.CollectionConverters._
+import scala.scalanative.build.{GC, Mode}
+import scala.scalanative.sbtplugin.ScalaNativePlugin.autoImport.nativeConfig
 
 object BuildHelper {
 
@@ -217,6 +216,9 @@ object BuildHelper {
       incOptions ~= (_.withLogRecompileOnMacro(true)),
       autoAPIMappings               := true,
       testFrameworks                := Seq(new TestFramework("zio.test.sbt.ZTestFramework")),
+      mimaPreviousArtifacts         := previousStableVersion.value.map(organization.value %% name.value % _).toSet,
+      mimaCheckDirection            := "backward",
+      mimaFailOnProblem             := true,
     )
 
   def mimaSettings(binCompatVersionToCompare: Option[String], failOnProblem: Boolean): Seq[Def.Setting[?]] =

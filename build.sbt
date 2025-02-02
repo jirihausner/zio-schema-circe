@@ -1,4 +1,5 @@
 import BuildHelper._
+import com.typesafe.tools.mima.plugin.MimaKeys.mimaPreviousArtifacts
 import xerial.sbt.Sonatype.sonatypeCentralHost
 
 lazy val binCompatVersionToCompare = None
@@ -46,6 +47,7 @@ lazy val root = project
   .settings(
     name           := "zio-schema-circe",
     publish / skip := true,
+    mimaPreviousArtifacts := Set.empty,
   )
   .aggregate(
     zioSchemaCirce.jvm,

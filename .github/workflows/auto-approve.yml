@@ -3,9 +3,9 @@ on:
   pull_request_target
 jobs:
   auto-approve:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     permissions:
       pull-requests: write
-    if: github.actor == 'scala-steward'
+    if: github.actor == 'scala-steward' || github.actor == github.repository_owner
     steps:
       - uses: hmarr/auto-approve-action@v4
