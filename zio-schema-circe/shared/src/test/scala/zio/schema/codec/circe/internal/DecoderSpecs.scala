@@ -769,6 +769,13 @@ private[circe] trait DecoderSpecs {
           WithComplexOptionField(Some(Order(1, BigDecimal.valueOf(10), "test"))),
         )
       },
+      test("recursive data structure")(
+        assertDecodes(
+          Schema[Recursive],
+          """{"n":{"n":null}}""",
+          Recursive(Some(Recursive(None))),
+        ),
+      ),
     ),
     suite("enumeration")(
       test("of primitives") {

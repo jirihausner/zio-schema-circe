@@ -1,26 +1,42 @@
 package zio.schema.codec.circe.internal
 
 import io.circe._
+import zio.Chunk
 import zio.prelude.NonEmptyMap
 import zio.schema._
 import zio.schema.annotation._
 import zio.schema.codec.circe.CirceCodec
-import zio.{Chunk, ChunkBuilder}
 
 import java.time.temporal.Temporal
+import java.util
+import java.util.concurrent.ConcurrentHashMap
 import scala.collection.immutable.ListMap
+import scala.collection.mutable
+import scala.util.control.NonFatal
 
 private[circe] object Codecs extends Codecs
 
 private[circe] trait Codecs {
 
-  type DiscriminatorTuple = Chunk[(discriminatorName, String)]
+  private val EmptyJsonObj: Json = Json.obj()
+
+  type DiscriminatorTuple = Option[(String, String)]
 
   def encodeChunk[A](implicit encoder: Encoder[A]): Encoder.AsArray[Chunk[A]] =
     Encoder.AsArray.instance[Chunk[A]](_.map(encoder(_)).toVector)
 
   def decodeChunk[A](implicit decoder: Decoder[A]): Decoder[Chunk[A]] =
     Decoder.decodeVector(decoder).map(Chunk.fromIterable)
+
+  def encodeSuspend[A](implicit encoder: => Encoder[A]): Encoder[A] = new Encoder[A] {
+    lazy val underlying: Encoder[A] = encoder
+    def apply(a: A): Json           = underlying(a)
+  }
+
+  def decodeSuspend[A](implicit decoder: => Decoder[A]): Decoder[A] = new Decoder[A] {
+    lazy val underlying: Decoder[A]          = decoder
+    def apply(c: HCursor): Decoder.Result[A] = underlying(c)
+  }
 
   def decodeFail[A](message: String): Decoder[A] = new Decoder[A] {
     override def apply(c: HCursor): Decoder.Result[A] = Left(DecodingFailure(message, c.history))
@@ -115,10 +131,57 @@ private[circe] trait Codecs {
     case StandardType.CurrencyType       => decodeCurrency
   }
 
+  private case class EncoderKey[A](
+    schema: Schema[A],
+    config: CirceCodec.Config,
+    discriminatorTuple: DiscriminatorTuple,
+  ) {
+    override val hashCode: Int = System.identityHashCode(schema) ^ config.hashCode ^ discriminatorTuple.hashCode
+    override def equals(obj: Any): Boolean = obj match {
+      case x: EncoderKey[_] => (x.schema eq schema) && x.config == config && x.discriminatorTuple == discriminatorTuple
+      case _                => false
+    }
+  }
+
+  private case class DecoderKey[A](schema: Schema[A], discriminator: Option[String]) {
+    override val hashCode: Int             = System.identityHashCode(schema) ^ discriminator.hashCode
+    override def equals(obj: Any): Boolean = obj match {
+      case x: DecoderKey[_] => (x.schema eq schema) && x.discriminator == discriminator
+      case _                => false
+    }
+  }
+
+  private val encoders = new ConcurrentHashMap[EncoderKey[_], Encoder[_]]()
+  private val decoders = new ConcurrentHashMap[DecoderKey[_], Decoder[_]]()
+
   def encodeSchema[A](
     schema: Schema[A],
     config: CirceCodec.Config,
-    discriminatorTuple: DiscriminatorTuple = Chunk.empty,
+    discriminatorTuple: DiscriminatorTuple = None,
+  ): Encoder[A] = {
+    val key                 = EncoderKey(schema, config, discriminatorTuple)
+    var encoder: Encoder[A] = encoders.get(key).asInstanceOf[Encoder[A]]
+    if (encoder eq null) {
+      encoder = encodeSchemaSlow(schema, config, discriminatorTuple)
+      encoders.put(key, encoder)
+    }
+    encoder
+  }
+
+  def decodeSchema[A](schema: Schema[A], discriminator: Option[String] = None): Decoder[A] = {
+    val key     = DecoderKey(schema, discriminator)
+    var decoder = decoders.get(key).asInstanceOf[Decoder[A]]
+    if (decoder eq null) {
+      decoder = decodeSchemaSlow(schema, discriminator)
+      decoders.put(key, decoder)
+    }
+    decoder
+  }
+
+  def encodeSchemaSlow[A](
+    schema: Schema[A],
+    config: CirceCodec.Config,
+    discriminatorTuple: DiscriminatorTuple = None,
   ): Encoder[A] = schema match {
     case Schema.Primitive(standardType, _)                     => encodePrimitive(standardType)
     case Schema.Sequence(schema, _, g, _, _)                   =>
@@ -132,93 +195,53 @@ private[circe] trait Codecs {
         .asInstanceOf[Encoder[A]]
     case Schema.Set(s, _)                                      =>
       encodeChunk(encodeSchema(s, config, discriminatorTuple)).contramap(m => Chunk.fromIterable(m))
-    case Schema.Transform(c, _, g, a, _)       => encodeTransform(a.foldLeft(c)((s, a) => s.annotate(a)), g, config)
-    case Schema.Tuple2(l, r, _)                =>
+    case Schema.Transform(c, _, g, a, _)    => encodeTransform(a.foldLeft(c)((s, a) => s.annotate(a)), g, config)
+    case Schema.Tuple2(l, r, _)             =>
       Encoder.encodeTuple2(encodeSchema(l, config, discriminatorTuple), encodeSchema(r, config, discriminatorTuple))
-    case Schema.Optional(schema, _)            => Encoder.encodeOption(encodeSchema(schema, config, discriminatorTuple))
-    case Schema.Fail(_, _)                     => Encoder.encodeUnit.contramap(_ => ())
-    case Schema.GenericRecord(_, structure, _) => encodeRecord(structure.toChunk, config)
-    case Schema.Either(left, right, _)         =>
+    case Schema.Optional(schema, _)         => Encoder.encodeOption(encodeSchema(schema, config, discriminatorTuple))
+    case Schema.Fail(_, _)                  => Encoder.encodeUnit.contramap(_ => ())
+    case s: Schema.GenericRecord            => encodeRecord(s, config)
+    case Schema.Either(left, right, _)      =>
       Encoder.encodeEither("Left", "Right")(
         encodeSchema(left, config, discriminatorTuple),
         encodeSchema(right, config, discriminatorTuple),
       )
-    case Schema.Fallback(left, right, _, _)    =>
+    case Schema.Fallback(left, right, _, _) =>
       encodeFallback(encodeSchema(left, config, discriminatorTuple), encodeSchema(right, config, discriminatorTuple))
-    case l @ Schema.Lazy(_)                    => encodeSchema(l.schema, config, discriminatorTuple)
-    case s: Schema.Record[A]                   => encodeCaseClass(s, config, discriminatorTuple)
-    // scalafmt: { maxColumn = 400, optIn.configStyleArguments = false }
-    case e @ Schema.Enum1(_, c, _)             => encodeEnum(e, config, c)
-    case e @ Schema.Enum2(_, c1, c2, _)        => encodeEnum(e, config, c1, c2)
-    case e @ Schema.Enum3(_, c1, c2, c3, _)    => encodeEnum(e, config, c1, c2, c3)
-    case e @ Schema.Enum4(_, c1, c2, c3, c4, _)                                                                                       => encodeEnum(e, config, c1, c2, c3, c4)
-    case e @ Schema.Enum5(_, c1, c2, c3, c4, c5, _)                                                                                   => encodeEnum(e, config, c1, c2, c3, c4, c5)
-    case e @ Schema.Enum6(_, c1, c2, c3, c4, c5, c6, _)                                                                               => encodeEnum(e, config, c1, c2, c3, c4, c5, c6)
-    case e @ Schema.Enum7(_, c1, c2, c3, c4, c5, c6, c7, _)                                                                           => encodeEnum(e, config, c1, c2, c3, c4, c5, c6, c7)
-    case e @ Schema.Enum8(_, c1, c2, c3, c4, c5, c6, c7, c8, _)                                                                       => encodeEnum(e, config, c1, c2, c3, c4, c5, c6, c7, c8)
-    case e @ Schema.Enum9(_, c1, c2, c3, c4, c5, c6, c7, c8, c9, _)                                                                   => encodeEnum(e, config, c1, c2, c3, c4, c5, c6, c7, c8, c9)
-    case e @ Schema.Enum10(_, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, _)                                                             =>
-      encodeEnum(e, config, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10)
-    case e @ Schema.Enum11(_, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, _)                                                        =>
-      encodeEnum(e, config, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11)
-    case e @ Schema.Enum12(_, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, _)                                                   =>
-      encodeEnum(e, config, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12)
-    case e @ Schema.Enum13(_, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, _)                                              =>
-      encodeEnum(e, config, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13)
-    case e @ Schema.Enum14(_, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, _)                                         =>
-      encodeEnum(e, config, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14)
-    case e @ Schema.Enum15(_, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, _)                                    =>
-      encodeEnum(e, config, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15)
-    case e @ Schema.Enum16(_, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, _)                               =>
-      encodeEnum(e, config, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16)
-    case e @ Schema.Enum17(_, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, _)                          =>
-      encodeEnum(e, config, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17)
-    case e @ Schema.Enum18(_, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, _)                     =>
-      encodeEnum(e, config, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18)
-    case e @ Schema.Enum19(_, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, _)                =>
-      encodeEnum(e, config, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19)
-    case e @ Schema
-          .Enum20(_, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, c20, _) =>
-      encodeEnum(e, config, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, c20)
-    case e @ Schema
-          .Enum21(_, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, c20, c21, _) =>
-      encodeEnum(e, config, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, c20, c21)
-    case e @ Schema.Enum22(_, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, c20, c21, c22, _) =>
-      encodeEnum(e, config, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, c20, c21, c22)
-    // scalafmt: { maxColumn = 120, optIn.configStyleArguments = true }
-    case e @ Schema.EnumN(_, cs, _) => encodeEnum(e, config, cs.toSeq: _*)
-    case d @ Schema.Dynamic(_)      => encodeDynamic(d, config)
-    case null                       =>
+    case l @ Schema.Lazy(_)                 => encodeSuspend(encodeSchema(l.schema, config, discriminatorTuple))
+    case s: Schema.Record[A]                => encodeCaseClass(s, config, discriminatorTuple)
+    case s: Schema.Enum[A]                  => encodeEnum(s, config)
+    case d @ Schema.Dynamic(_)              => encodeDynamic(d, config)
+    case null                               =>
       throw new Exception(s"A captured schema is null, most likely due to wrong field initialization order")
   }
 
-  def decodeSchema[A](schema: Schema[A], discriminator: Int = -1): Decoder[A] = schema match {
+  def decodeSchemaSlow[A](schema: Schema[A], discriminator: Option[String] = None): Decoder[A] = schema match {
     case Schema.Primitive(standardType, _)              => decodePrimitive(standardType)
     case Schema.Optional(codec, _)                      => Decoder.decodeOption(decodeSchema(codec, discriminator))
     case Schema.Tuple2(left, right, _)                  =>
-      Decoder.decodeTuple2(decodeSchema(left, -1), decodeSchema(right, -1))
+      Decoder.decodeTuple2(decodeSchema(left, discriminator), decodeSchema(right, discriminator))
     case Schema.Transform(c, f, _, a, _)                =>
       decodeSchema(a.foldLeft(c)((s, a) => s.annotate(a)), discriminator).emap(f)
-    case Schema.Sequence(codec, f, _, _, _)             => decodeChunk(decodeSchema(codec, -1)).map(f)
+    case Schema.Sequence(codec, f, _, _, _)             => decodeChunk(decodeSchema(codec, discriminator)).map(f)
     case s @ Schema.NonEmptySequence(codec, _, _, _, _) =>
-      decodeChunk(decodeSchema(codec, -1)).map(s.fromChunk)
+      decodeChunk(decodeSchema(codec, discriminator)).map(s.fromChunk)
     case Schema.Map(ks, vs, _)                          => decodeMap(ks, vs)
     case Schema.NonEmptyMap(ks, vs, _)                  =>
       decodeMap(ks, vs).emap(m => NonEmptyMap.fromMapOption(m).toRight("NonEmptyMap expected"))
-    case Schema.Set(s, _)                              => decodeChunk(decodeSchema(s, -1)).map(entries => entries.toSet)
-    case Schema.Fail(message, _)                       => decodeFail(message)
-    case Schema.GenericRecord(_, structure, _)         =>
-      decodeRecord(structure.toChunk, schema.annotations.contains(rejectExtraFields()))
-    case Schema.Either(left, right, _)                 =>
-      Decoder.decodeEither("Left", "Right")(decodeSchema(left, -1), decodeSchema(right, -1))
-    case s @ Schema.Fallback(_, _, _, _)               => decodeFallback(s)
-    case l @ Schema.Lazy(_)                            => decodeSchema(l.schema, discriminator)
-    case s @ Schema.CaseClass0(_, _, _)                => decodeCaseClass0(s)
-    case s @ Schema.CaseClass1(_, _, _, _)             => decodeCaseClass1(s, discriminator)
-    case s @ Schema.CaseClass2(_, _, _, _, _)          => decodeCaseClass2(s, discriminator)
-    case s @ Schema.CaseClass3(_, _, _, _, _, _)       => decodeCaseClass3(s, discriminator)
-    case s @ Schema.CaseClass4(_, _, _, _, _, _, _)    => decodeCaseClass4(s, discriminator)
-    case s @ Schema.CaseClass5(_, _, _, _, _, _, _, _) => decodeCaseClass5(s, discriminator)
+    case Schema.Set(s, _)                  => decodeChunk(decodeSchema(s, discriminator)).map(entries => entries.toSet)
+    case Schema.Fail(message, _)           => decodeFail(message)
+    case s: Schema.GenericRecord           => decodeRecord(s, discriminator)
+    case Schema.Either(left, right, _)     =>
+      Decoder.decodeEither("Left", "Right")(decodeSchema(left, discriminator), decodeSchema(right, discriminator))
+    case s @ Schema.Fallback(_, _, _, _)   => decodeFallback(s)
+    case l @ Schema.Lazy(_)                => decodeSuspend(decodeSchema(l.schema, discriminator))
+    case s @ Schema.CaseClass0(_, _, _)    => decodeCaseClass0(s, discriminator)
+    case s @ Schema.CaseClass1(_, _, _, _) => decodeCaseClass1(s, discriminator)
+    case s @ Schema.CaseClass2(_, _, _, _, _)                                   => decodeCaseClass2(s, discriminator)
+    case s @ Schema.CaseClass3(_, _, _, _, _, _)                                => decodeCaseClass3(s, discriminator)
+    case s @ Schema.CaseClass4(_, _, _, _, _, _, _)                             => decodeCaseClass4(s, discriminator)
+    case s @ Schema.CaseClass5(_, _, _, _, _, _, _, _)                          => decodeCaseClass5(s, discriminator)
     case s @ Schema.CaseClass6(_, _, _, _, _, _, _, _, _)                       => decodeCaseClass6(s, discriminator)
     case s @ Schema.CaseClass7(_, _, _, _, _, _, _, _, _, _)                    => decodeCaseClass7(s, discriminator)
     case s @ Schema.CaseClass8(_, _, _, _, _, _, _, _, _, _, _)                 => decodeCaseClass8(s, discriminator)
@@ -236,61 +259,22 @@ private[circe] trait Codecs {
     case s @ Schema
           .CaseClass15(_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _) =>
       decodeCaseClass15(s, discriminator)
-    case s @ Schema.CaseClass16(_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _)                          =>
+    case s @ Schema.CaseClass16(_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _)          =>
       decodeCaseClass16(s, discriminator)
-    case s @ Schema.CaseClass17(_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _)                       =>
+    case s @ Schema.CaseClass17(_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _)       =>
       decodeCaseClass17(s, discriminator)
-    case s @ Schema.CaseClass18(_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _)                    =>
+    case s @ Schema.CaseClass18(_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _)    =>
       decodeCaseClass18(s, discriminator)
-    case s @ Schema.CaseClass19(_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _)                 =>
+    case s @ Schema.CaseClass19(_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _) =>
       decodeCaseClass19(s, discriminator)
-    case s @ Schema.CaseClass20(_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _)                 =>
+    case s @ Schema.CaseClass20(_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _) =>
       decodeCaseClass20(s, discriminator)
-    case s @ Schema.CaseClass21(_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _)                 =>
+    case s @ Schema.CaseClass21(_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _) =>
       decodeCaseClass21(s, discriminator)
-    case s @ Schema.CaseClass22(_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _)                 =>
+    case s @ Schema.CaseClass22(_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _) =>
       decodeCaseClass22(s, discriminator)
-    // scalafmt: { maxColumn = 400, optIn.configStyleArguments = false }
-    case e @ Schema.Enum1(_, c, _)                                                                                => decodeEnum(e, c)
-    case e @ Schema.Enum2(_, c1, c2, _)                                                                           => decodeEnum(e, c1, c2)
-    case e @ Schema.Enum3(_, c1, c2, c3, _)                                                                       => decodeEnum(e, c1, c2, c3)
-    case e @ Schema.Enum4(_, c1, c2, c3, c4, _)                                                                   => decodeEnum(e, c1, c2, c3, c4)
-    case e @ Schema.Enum5(_, c1, c2, c3, c4, c5, _)                                                               => decodeEnum(e, c1, c2, c3, c4, c5)
-    case e @ Schema.Enum6(_, c1, c2, c3, c4, c5, c6, _)                                                           => decodeEnum(e, c1, c2, c3, c4, c5, c6)
-    case e @ Schema.Enum7(_, c1, c2, c3, c4, c5, c6, c7, _)                                                       => decodeEnum(e, c1, c2, c3, c4, c5, c6, c7)
-    case e @ Schema.Enum8(_, c1, c2, c3, c4, c5, c6, c7, c8, _)                                                   => decodeEnum(e, c1, c2, c3, c4, c5, c6, c7, c8)
-    case e @ Schema.Enum9(_, c1, c2, c3, c4, c5, c6, c7, c8, c9, _)                                               =>
-      decodeEnum(e, c1, c2, c3, c4, c5, c6, c7, c8, c9)
-    case e @ Schema.Enum10(_, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, _)                                         =>
-      decodeEnum(e, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10)
-    case e @ Schema.Enum11(_, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, _)                                    =>
-      decodeEnum(e, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11)
-    case e @ Schema.Enum12(_, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, _)                               =>
-      decodeEnum(e, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12)
-    case e @ Schema.Enum13(_, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, _)                          =>
-      decodeEnum(e, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13)
-    case e @ Schema.Enum14(_, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, _)                     =>
-      decodeEnum(e, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14)
-    case e @ Schema.Enum15(_, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, _)                =>
-      decodeEnum(e, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15)
-    case e @ Schema.Enum16(_, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, _)           =>
-      decodeEnum(e, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16)
-    case e @ Schema.Enum17(_, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, _)      =>
-      decodeEnum(e, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17)
-    case e @ Schema.Enum18(_, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, _) =>
-      decodeEnum(e, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18)
-    case e @ Schema.Enum19(_, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, _)                =>
-      decodeEnum(e, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19)
-    case e @ Schema
-          .Enum20(_, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, c20, _) =>
-      decodeEnum(e, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, c20)
-    case e @ Schema.Enum21(_, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, c20, c21, _)      =>
-      decodeEnum(e, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, c20, c21)
-    case e @ Schema.Enum22(_, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, c20, c21, c22, _) =>
-      decodeEnum(e, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, c20, c21, c22)
-    // scalafmt: { maxColumn = 120, optIn.configStyleArguments = true }
-    case e @ Schema.EnumN(_, cs, _) => decodeEnum(e, cs.toSeq: _*)
-    case d @ Schema.Dynamic(_)      => decodeDynamic(d)
+    case s: Schema.Enum[A]                                                                        => decodeEnum(s)
+    case d @ Schema.Dynamic(_)                                                                    => decodeDynamic(d)
     case _ => throw new Exception(s"Missing a handler for decoding of schema ${schema.toString()}.")
   }
 
@@ -439,11 +423,7 @@ private[circe] trait Codecs {
     }
   }
 
-  def encodeEnum[Z](
-    schema: Schema.Enum[Z],
-    config: CirceCodec.Config,
-    cases: Schema.Case[Z, _]*,
-  ): Encoder[Z] = {
+  def encodeEnum[Z](schema: Schema.Enum[Z], config: CirceCodec.Config): Encoder[Z] = {
     // if all cases are CaseClass0, encode as a String
     if (schema.annotations.exists(_.isInstanceOf[simpleEnum])) {
       Encoder.encodeString.contramap {
@@ -455,36 +435,28 @@ private[circe] trait Codecs {
     } else {
       new Encoder[Z] {
         override def apply(value: Z): Json = {
-          val nonTransientCase = {
-            try
-              cases.collectFirst {
-                case c @ Schema.Case(_, _, _, _, _, annotations) if annotations.collectFirst { case _: transientCase =>
-                      ()
-                    }.isEmpty && c.deconstructOption(value).isDefined =>
-                  c
-              }
+          val nonTransientCase =
+            try schema.nonTransientCases.find(_.deconstructOption(value).isDefined)
             catch {
-              case ex: Throwable => throw new RuntimeException(s"Failed to encode enum type $schema", ex)
+              case ex if NonFatal(ex) => throw new RuntimeException(s"Failed to encode enum type $schema", ex)
             }
-          }
 
           nonTransientCase match {
-            case None        => Json.obj()
+            case None        => EmptyJsonObj // for transient cases
             case Some(case_) =>
-              val caseName = case_.caseName
-
-              val discriminatorChunk = schema.annotations.collect { case d: discriminatorName =>
-                (d, caseName)
-              }
+              val caseName           = case_.caseName
               val noDiscriminators   = schema.noDiscriminator
+              val discriminatorTuple =
+                if (noDiscriminators) None
+                else schema.annotations.collectFirst { case d: discriminatorName => (d.tag, caseName) }
 
               val enumJson = encodeSchema(
                 case_.schema.asInstanceOf[Schema[Any]],
                 config,
-                discriminatorTuple = if (noDiscriminators) Chunk.empty else discriminatorChunk,
+                discriminatorTuple = if (noDiscriminators) None else discriminatorTuple,
               )(case_.deconstruct(value))
 
-              if (discriminatorChunk.nonEmpty || noDiscriminators) enumJson
+              if (discriminatorTuple.isDefined || noDiscriminators) enumJson
               else Json.obj(KeyEncoder.encodeKeyString(caseName) -> enumJson)
           }
         }
@@ -492,90 +464,93 @@ private[circe] trait Codecs {
     }
   }
 
-  private def deAliasCaseName(alias: String, caseNameAliases: Map[String, String]): String =
-    caseNameAliases.getOrElse(alias, alias)
-
-  def decodeEnum[Z](parentSchema: Schema.Enum[Z], cases: Schema.Case[Z, _]*): Decoder[Z] = {
-    val caseNameAliases = cases.flatMap { case Schema.Case(name, _, _, _, _, annotations) =>
-      annotations.flatMap {
-        case a: caseNameAliases => a.aliases.toList.map(_ -> name)
-        case cn: caseName       => List(cn.name -> name)
-        case _                  => Nil
+  def decodeEnum[Z](parentSchema: Schema.Enum[Z]): Decoder[Z] = {
+    val caseNameAliases = new mutable.HashMap[String, Schema.Case[Z, Any]]
+    parentSchema.cases.foreach { case_ =>
+      val schema = case_.asInstanceOf[Schema.Case[Z, Any]]
+      caseNameAliases.put(case_.id, schema)
+      case_.annotations.foreach {
+        case cna: caseNameAliases => cna.aliases.foreach(a => caseNameAliases.put(a, schema))
+        case cn: caseName         => caseNameAliases.put(cn.name, schema)
+        case _                    =>
       }
-    }.toMap
+    }
 
-    // if all cases are CaseClass0, decode as String
-    if (cases.forall(_.schema.isInstanceOf[Schema.CaseClass0[_]])) {
-      val caseMap: Map[String, Z] =
-        cases.map(case_ => case_.id -> case_.schema.asInstanceOf[Schema.CaseClass0[Z]].defaultConstruct()).toMap
-      Decoder.decodeString.emap { str =>
-        caseMap.get(caseNameAliases.getOrElse(str, str)) match {
-          case Some(z) => Right(z)
-          case None    => Left("Unrecognized string")
+    if (parentSchema.cases.forall(_.schema.isInstanceOf[Schema.CaseClass0[_]])) { // if all cases are CaseClass0, decode as String
+      new Decoder[Z] {
+
+        val cases = new util.HashMap[String, Z](caseNameAliases.size * 2)
+        caseNameAliases.foreach { case (name, case_) =>
+          cases.put(name, case_.schema.asInstanceOf[Schema.CaseClass0[Z]].defaultConstruct())
+        }
+
+        override def apply(c: HCursor): Decoder.Result[Z] = {
+          c.as[String].flatMap { str =>
+            val result = cases.get(str)
+            if (result == null) Left(DecodingFailure("Unrecognized string", c.history))
+            else Right(result)
+          }
+        }
+      }
+    } else if (parentSchema.annotations.exists(_.isInstanceOf[noDiscriminator])) {
+      new Decoder[Z] {
+
+        val decoders = parentSchema.cases.map(c => decodeSchema(c.schema))
+
+        override def apply(c: HCursor): Decoder.Result[Z] = {
+          val it = decoders.iterator
+          while (it.hasNext) {
+            it.next()(c) match {
+              case Left(_)       =>
+              case Right(result) =>
+                return Right(result.asInstanceOf[Z])
+            }
+          }
+          Left(DecodingFailure("None of the subtypes could decode the data", c.history))
         }
       }
     } else {
+      val discriminator = parentSchema.annotations.collectFirst { case d: discriminatorName => d.tag }
+      discriminator match {
+        case None       =>
+          new Decoder[Z] {
 
-      val noDiscriminators = parentSchema.annotations.exists {
-        case noDiscriminator() => true
-        case _                 => false
-      }
-
-      new Decoder[Z] {
-        override def apply(c: HCursor): Decoder.Result[Z] = {
-          if (noDiscriminators) {
-            cases.foldLeft[Option[Z]](None) {
-              case (result @ Some(_), _) => result
-              case (_, case_)            =>
-                decodeSchema(case_.schema)(c).toOption.map(_.asInstanceOf[Z])
-            } match {
-              case Some(value) => Right(value)
-              case None        => Left(DecodingFailure("None of the subtypes could decode the data", c.history))
+            val cases = new util.HashMap[String, Decoder[Any]](caseNameAliases.size * 2)
+            caseNameAliases.foreach { case (name, case_) =>
+              cases.put(name, decodeSchema(case_.schema, discriminator))
             }
-          } else {
-            val maybeDiscriminatorName =
-              parentSchema.annotations.collectFirst { case d: discriminatorName => d.tag }
 
-            maybeDiscriminatorName match {
-              case None =>
-                c.keys.flatMap(_.headOption) match {
-                  case Some(field) =>
-                    val subtype = deAliasCaseName(field, caseNameAliases)
-                    cases.find(_.id == subtype) match {
-                      case Some(case_) =>
-                        c.downField(field).success match {
-                          case None             => Left(DecodingFailure("Unrecognized subtype", c.history))
-                          case Some(caseCursor) =>
-                            decodeSchema(case_.schema)(caseCursor).map(_.asInstanceOf[Z])
-                        }
-                      case None        => Left(DecodingFailure("Unrecognized subtype", c.history))
-                    }
-                  case None        =>
+            override def apply(c: HCursor): Decoder.Result[Z] = {
+              c.keys.flatMap(_.headOption) match {
+                case None        => Left(DecodingFailure("Missing subtype", c.history))
+                case Some(field) =>
+                  val decoder = cases.get(field)
+                  if (decoder == null)
                     Left(DecodingFailure("Unrecognized subtype", c.history))
-                }
-
-              case Some(discriminator) =>
-                c.keys.getOrElse(Iterable.empty).zipWithIndex.collectFirst[Either[DecodingFailure, (Int, String)]] {
-                  case (name, index) if deAliasCaseName(name, caseNameAliases) == discriminator =>
-                    c.downField(name).as[String] match {
-                      case Left(error)  => Left(error)
-                      case Right(value) =>
-                        Right((index, deAliasCaseName(value, caseNameAliases)))
-                    }
-                } match {
-                  case None                                  => Left(DecodingFailure("Unrecognized subtype", c.history))
-                  case Some(Left(error))                     => Left(error)
-                  case Some(Right((discriminator, subtype))) =>
-                    cases.find(_.id == subtype) match {
-                      case Some(case_) =>
-                        decodeSchema(case_.schema, discriminator)(c).map(_.asInstanceOf[Z])
-                      case None        =>
-                        Left(DecodingFailure("Unrecognized subtype", c.history))
-                    }
-                }
+                  else
+                    c.get(field)(decoder).map(_.asInstanceOf[Z])
+              }
             }
           }
-        }
+        case Some(name) =>
+          new Decoder[Z] {
+
+            val cases = new util.HashMap[String, Decoder[Any]](caseNameAliases.size * 2)
+            caseNameAliases.foreach { case (name, case_) =>
+              cases.put(name, decodeSchema(case_.schema, discriminator))
+            }
+
+            override def apply(c: HCursor): Decoder.Result[Z] = {
+              c.get[String](name) match {
+                case Left(_)    => Left(DecodingFailure("Missing subtype", c.history))
+                case Right(cse) =>
+                  val decoder = cases.get(cse)
+                  if (decoder == null)
+                    Left(DecodingFailure("Unrecognized subtype", c.history))
+                  else c.as(decoder).map(_.asInstanceOf[Z])
+              }
+            }
+          }
       }
     }
   }
@@ -590,17 +565,21 @@ private[circe] trait Codecs {
   }
 
   def decodeFallback[A, B](schema: Schema.Fallback[A, B]): Decoder[Fallback[A, B]] = new Decoder[Fallback[A, B]] {
-    override def apply(c: HCursor) = {
+
+    val leftDecoder  = decodeSchema(schema.left)
+    val rightDecoder = decodeSchema(schema.right)
+
+    override def apply(c: HCursor): Decoder.Result[Fallback[A, B]] = {
       if (c.value.isArray) {
         c.values.toList.flatten match {
           case Nil                  => Left(DecodingFailure("Empty array on fallback", c.history))
           case left :: right :: Nil =>
-            left.as(decodeSchema(schema.left)) match {
-              case Left(_)      => right.as(decodeSchema(schema.right)).map(Fallback.Right(_))
+            left.as(leftDecoder) match {
+              case Left(_)      => right.as(rightDecoder).map(Fallback.Right(_))
               case Right(first) =>
                 if (!schema.fullDecode) Right(Fallback.Left(first))
                 else
-                  right.as(decodeSchema(schema.right)) match {
+                  right.as(rightDecoder) match {
                     case Left(_)       => Right(Fallback.Left(first))
                     case Right(second) => Right(Fallback.Both(first, second))
                   }
@@ -608,8 +587,8 @@ private[circe] trait Codecs {
           case _                    => Left(DecodingFailure("Too many items on fallback", c.history))
         }
       } else {
-        decodeSchema(schema.left)(c).map(Fallback.Left(_)).left.flatMap { _ =>
-          decodeSchema(schema.right)(c).map(Fallback.Right(_)).left.flatMap { _ =>
+        leftDecoder(c).map(Fallback.Left(_)).left.flatMap { _ =>
+          rightDecoder(c).map(Fallback.Right(_)).left.flatMap { _ =>
             decodeFail("Fallback decoder was unable to decode both left and right sides")(c)
           }
         }
@@ -617,196 +596,221 @@ private[circe] trait Codecs {
     }
   }
 
-  private def encodeRecord[Z](
-    structure: Seq[Schema.Field[Z, _]],
-    config: CirceCodec.Config,
-  ): Encoder[ListMap[String, _]] = new Encoder[ListMap[String, _]] {
-    override def apply(value: ListMap[String, _]) = {
-      if (structure.isEmpty) Json.obj()
-      else {
-        Json.obj(
-          structure.collect {
-            case f @ Schema.Field(_, a, _, _, _, _)
-                if !f.transient && !isEmptyOptionalValue(f, value(f.fieldName), config) =>
-              KeyEncoder.encodeKeyString(f.fieldName) ->
-                encodeSchema(a.asInstanceOf[Schema[Any]], config)(value(f.fieldName))
-          }: _*,
-        )
+  private def encodeRecord[Z](schema: Schema.GenericRecord, config: CirceCodec.Config): Encoder[ListMap[String, _]] =
+    new Encoder[ListMap[String, _]] {
+
+      val nonTransientFields = schema.nonTransientFields.toArray
+      val encoders           =
+        nonTransientFields.map(field => encodeSchema(field.schema.asInstanceOf[Schema[Any]], config))
+
+      override def apply(value: ListMap[String, _]) = {
+        if (nonTransientFields.isEmpty) EmptyJsonObj
+        else {
+          val builder = Array.newBuilder[(String, Json)]
+          var i       = 0
+          while (i < nonTransientFields.length) {
+            val field      = nonTransientFields(i)
+            val fieldName  = field.fieldName
+            val fieldValue = value(fieldName)
+            if (!isEmptyOptionalValue(field, fieldValue, config))
+              builder += KeyEncoder.encodeKeyString(fieldName) -> encoders(i)(fieldValue)
+            i += 1
+          }
+          Json.fromFields(builder.result())
+        }
       }
     }
-  }
 
   private def isEmptyOptionalValue(schema: Schema.Field[_, _], value: Any, config: CirceCodec.Config) = {
-    val ignoreEmptyCollections = config.ignoreEmptyCollections || schema.optional
-    val isEmptyCollection      = value match {
-      case _: Iterable[_] => value.asInstanceOf[Iterable[_]].isEmpty
+    (config.ignoreEmptyCollections || schema.optional) && (value match {
       case None           => true
+      case _: Iterable[_] => value.asInstanceOf[Iterable[_]].isEmpty
       case _              => false
-    }
-
-    ignoreEmptyCollections && isEmptyCollection
+    })
   }
 
   def decodeRecord[Z](
-    structure: Seq[Schema.Field[Z, _]],
-    rejectAdditionalFields: Boolean,
+    schema: Schema.GenericRecord,
+    discriminator: Option[String],
   ): Decoder[ListMap[String, Any]] = new Decoder[ListMap[String, Any]] {
-    override def apply(c: HCursor) = {
-      c.as[JsonObject].flatMap { obj =>
-        try {
-          val builder: ChunkBuilder[(String, Any)] = ChunkBuilder.make[(String, Any)](structure.size)
-          obj.toIterable.foreach { case (key, value) =>
-            structure.find(_.nameAndAliases.contains(key)) match {
-              case Some(s @ Schema.Field(_, schema, _, _, _, _)) =>
-                val fieldName = s.fieldName
-                decodeSchema(schema)(value.hcursor) match {
-                  case Left(error)  => throw error
-                  case Right(value) =>
-                    builder +=
-                      KeyDecoder
-                        .decodeKeyString(fieldName)
-                        .getOrElse(throw DecodingFailure(s"Failed to decode field: $fieldName", c.history)) -> value
-                }
-              case None if rejectAdditionalFields                =>
-                throw DecodingFailure(s"Unexpected field: $key", c.history)
-              case None                                          => ()
-            }
-          }
 
-          val tuples                       = builder.result()
-          val collectedFields: Set[String] = tuples.map { case (fieldName, _) => fieldName }.toSet
-          val resultBuilder                = ListMap.newBuilder[String, Any]
+    val fieldWithDecoders      = new util.HashMap[String, (String, Decoder[Any])](schema.fields.size * 2)
+    val defaults               = new util.HashMap[String, Any](schema.fields.size * 2)
+    schema.fields.foreach { field =>
+      val fieldName = field.fieldName
+      val decoder   = decodeSchema(field.schema).asInstanceOf[Decoder[Any]]
+      field.nameAndAliases.foreach(x => fieldWithDecoders.put(x, (fieldName, decoder)))
+      if ((field.optional || field.transient) && field.defaultValue.isDefined) {
+        defaults.put(fieldName, field.defaultValue.get)
+      }
+    }
+    val rejectAdditionalFields = schema.annotations.exists(_.isInstanceOf[rejectExtraFields])
 
-          // add fields with default values if they are not present in the JSON
-          structure.foreach { field =>
-            if (!collectedFields.contains(field.fieldName) && field.optional && field.defaultValue.isDefined) {
-              val value = field.fieldName -> field.defaultValue.get
-              resultBuilder += value
+    override def apply(c: HCursor): Decoder.Result[ListMap[String, Any]] = {
+      val map  = new util.HashMap[String, Any]
+      val keys = c.keys.getOrElse(Seq.empty)
+
+      try {
+        var i  = 0
+        keys.foreach { key =>
+          val fieldWithDecoder = fieldWithDecoders.get(key)
+          if (fieldWithDecoder != null) {
+            val (field, decoder) = fieldWithDecoder
+            c.get(key)(decoder) match {
+              case Left(err)    => throw err
+              case Right(value) =>
+                val prev = map.put(field, value)
+                if (prev != null)
+                  throw DecodingFailure(s"Duplicate field: $key", c.history)
             }
+          } else {
+            if (rejectAdditionalFields && !discriminator.contains(key))
+              throw DecodingFailure(s"Unexpected field: $key", c.history)
           }
-          Right((resultBuilder ++= tuples).result())
-        } catch {
-          case df: DecodingFailure => Left(df)
-          case e: Exception        => Left(DecodingFailure(e.getMessage(), c.history))
+          i += 1
         }
+        val it = defaults.entrySet().iterator()
+        while (it.hasNext) {
+          val entry = it.next()
+          map.putIfAbsent(entry.getKey, entry.getValue)
+        }
+
+        val builder =
+          ListMap.newBuilder[String, Any] ++= ({ // to avoid O(n) insert operations
+            import scala.collection.JavaConverters.mapAsScalaMapConverter // use deprecated class for Scala 2.12 compatibility
+            map.asScala
+          }: @scala.annotation.nowarn)
+        Right(builder.result())
+      } catch {
+        case df: DecodingFailure => Left(df)
+        case e: Exception        => Left(DecodingFailure(e.getMessage(), c.history))
       }
     }
   }
 
   // scalafmt: { maxColumn = 400, optIn.configStyleArguments = false }
   def encodeCaseClass[A](schema: Schema.Record[A], config: CirceCodec.Config, discriminatorTuple: DiscriminatorTuple): Encoder[A] = new Encoder[A] {
-    override def apply(a: A) = {
-      Json.obj(
-        (discriminatorTuple.map { discriminator =>
-          val (tag, caseTpeName) = discriminator
-          KeyEncoder.encodeKeyString(tag.tag) -> Encoder.encodeString(KeyEncoder.encodeKeyString(caseTpeName))
-        } ++
-          schema.nonTransientFields.map { case s: Schema.Field[A, _] =>
-            val valueEncoder =
-              try {
-                encodeSchema(s.schema, config)
-              } catch {
-                case e: Throwable => throw new RuntimeException(s"Failed to encode field '${s.name}' in $schema'", e)
-              }
-            val value        = s.get(a)
-            val valueJson    = valueEncoder(value)
 
-            if (!isEmptyOptionalValue(s, value, config) && (!valueJson.isNull || !config.ignoreNullValues))
-              Some(KeyEncoder.encodeKeyString(s.name) -> valueJson)
-            else None
-          }.flatten).toSeq: _*,
-      )
+    val nonTransientFields = schema.nonTransientFields.map(_.asInstanceOf[Schema.Field[A, Any]]).toArray
+    val fieldEncoders      = nonTransientFields.map(s => encodeSchema(s.schema, config, discriminatorTuple))
+
+    override def apply(a: A): Json = {
+      val builder = Array.newBuilder[(String, Json)]
+      discriminatorTuple.foreach { case (tag, name) =>
+        builder += KeyEncoder.encodeKeyString(tag) -> Encoder.encodeString(name)
+      }
+      var i       = 0
+      while (i < nonTransientFields.length) {
+        val schema  = nonTransientFields(i)
+        val encoder = fieldEncoders(i)
+        val value   = schema.get(a)
+        val json    = encoder(value)
+        if (!isEmptyOptionalValue(schema, value, config) && (!json.isNull || !config.ignoreNullValues))
+          builder += KeyEncoder.encodeKeyString(schema.name) -> json
+        i += 1
+      }
+      Json.fromFields(builder.result())
     }
   }
 
-  def decodeCaseClass0[Z](schema: Schema.CaseClass0[Z]): Decoder[Z] = new Decoder[Z] {
-    override def apply(c: HCursor) = {
-      val rejectExtraFields = schema.annotations.collectFirst { case _: rejectExtraFields => () }.isDefined
+  def decodeCaseClass0[Z](schema: Schema.CaseClass0[Z], discriminator: Option[String]): Decoder[Z] = new Decoder[Z] {
 
-      if (rejectExtraFields) Left(DecodingFailure("Extra fields found", c.history))
-      else Right(schema.defaultConstruct())
+    val rejectExtraFields = schema.annotations.collectFirst { case _: rejectExtraFields => () }.isDefined
+    val noDiscriminator   = discriminator.isEmpty
+
+    override def apply(c: HCursor): Decoder.Result[Z] = {
+      if (noDiscriminator) {
+        if (!c.value.isObject)
+          return Left(DecodingFailure("Expected empty object", c.history))
+        else if (rejectExtraFields && c.keys.getOrElse(Seq.empty).nonEmpty)
+          return Left(DecodingFailure("Extra fields found", c.history))
+      } else {
+        if (!c.value.isString)
+          return Left(DecodingFailure("Extra fields found", c.history))
+      }
+      Right(schema.defaultConstruct())
     }
   }
 
-  def decodeCaseClass1[A, Z](schema: Schema.CaseClass1[A, Z], discriminator: Int): Decoder[Z] = {
+  def decodeCaseClass1[A, Z](schema: Schema.CaseClass1[A, Z], discriminator: Option[String]): Decoder[Z] = {
     decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
       schema.defaultConstruct(buffer(0).asInstanceOf[A])
     }
   }
 
-  def decodeCaseClass2[A1, A2, Z](schema: Schema.CaseClass2[A1, A2, Z], discriminator: Int): Decoder[Z] = {
+  def decodeCaseClass2[A1, A2, Z](schema: Schema.CaseClass2[A1, A2, Z], discriminator: Option[String]): Decoder[Z] = {
     decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(buffer(0).asInstanceOf[A1], buffer(1).asInstanceOf[A2])
     }
   }
 
-  def decodeCaseClass3[A1, A2, A3, Z](schema: Schema.CaseClass3[A1, A2, A3, Z], discriminator: Int): Decoder[Z] = {
+  def decodeCaseClass3[A1, A2, A3, Z](schema: Schema.CaseClass3[A1, A2, A3, Z], discriminator: Option[String]): Decoder[Z] = {
     decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(buffer(0).asInstanceOf[A1], buffer(1).asInstanceOf[A2], buffer(2).asInstanceOf[A3])
     }
   }
 
-  def decodeCaseClass4[A1, A2, A3, A4, Z](schema: Schema.CaseClass4[A1, A2, A3, A4, Z], discriminator: Int): Decoder[Z] = {
+  def decodeCaseClass4[A1, A2, A3, A4, Z](schema: Schema.CaseClass4[A1, A2, A3, A4, Z], discriminator: Option[String]): Decoder[Z] = {
     decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(buffer(0).asInstanceOf[A1], buffer(1).asInstanceOf[A2], buffer(2).asInstanceOf[A3], buffer(3).asInstanceOf[A4])
     }
   }
 
-  def decodeCaseClass5[A1, A2, A3, A4, A5, Z](schema: Schema.CaseClass5[A1, A2, A3, A4, A5, Z], discriminator: Int): Decoder[Z] = {
+  def decodeCaseClass5[A1, A2, A3, A4, A5, Z](schema: Schema.CaseClass5[A1, A2, A3, A4, A5, Z], discriminator: Option[String]): Decoder[Z] = {
     decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(buffer(0).asInstanceOf[A1], buffer(1).asInstanceOf[A2], buffer(2).asInstanceOf[A3], buffer(3).asInstanceOf[A4], buffer(4).asInstanceOf[A5])
     }
   }
 
-  def decodeCaseClass6[A1, A2, A3, A4, A5, A6, Z](schema: Schema.CaseClass6[A1, A2, A3, A4, A5, A6, Z], discriminator: Int): Decoder[Z] = {
+  def decodeCaseClass6[A1, A2, A3, A4, A5, A6, Z](schema: Schema.CaseClass6[A1, A2, A3, A4, A5, A6, Z], discriminator: Option[String]): Decoder[Z] = {
     decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(buffer(0).asInstanceOf[A1], buffer(1).asInstanceOf[A2], buffer(2).asInstanceOf[A3], buffer(3).asInstanceOf[A4], buffer(4).asInstanceOf[A5], buffer(5).asInstanceOf[A6])
     }
   }
 
-  def decodeCaseClass7[A1, A2, A3, A4, A5, A6, A7, Z](schema: Schema.CaseClass7[A1, A2, A3, A4, A5, A6, A7, Z], discriminator: Int): Decoder[Z] = {
+  def decodeCaseClass7[A1, A2, A3, A4, A5, A6, A7, Z](schema: Schema.CaseClass7[A1, A2, A3, A4, A5, A6, A7, Z], discriminator: Option[String]): Decoder[Z] = {
     decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(buffer(0).asInstanceOf[A1], buffer(1).asInstanceOf[A2], buffer(2).asInstanceOf[A3], buffer(3).asInstanceOf[A4], buffer(4).asInstanceOf[A5], buffer(5).asInstanceOf[A6], buffer(6).asInstanceOf[A7])
     }
   }
 
-  def decodeCaseClass8[A1, A2, A3, A4, A5, A6, A7, A8, Z](schema: Schema.CaseClass8[A1, A2, A3, A4, A5, A6, A7, A8, Z], discriminator: Int): Decoder[Z] = {
+  def decodeCaseClass8[A1, A2, A3, A4, A5, A6, A7, A8, Z](schema: Schema.CaseClass8[A1, A2, A3, A4, A5, A6, A7, A8, Z], discriminator: Option[String]): Decoder[Z] = {
     decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(buffer(0).asInstanceOf[A1], buffer(1).asInstanceOf[A2], buffer(2).asInstanceOf[A3], buffer(3).asInstanceOf[A4], buffer(4).asInstanceOf[A5], buffer(5).asInstanceOf[A6], buffer(6).asInstanceOf[A7], buffer(7).asInstanceOf[A8])
     }
   }
 
-  def decodeCaseClass9[A1, A2, A3, A4, A5, A6, A7, A8, A9, Z](schema: Schema.CaseClass9[A1, A2, A3, A4, A5, A6, A7, A8, A9, Z], discriminator: Int): Decoder[Z] = {
+  def decodeCaseClass9[A1, A2, A3, A4, A5, A6, A7, A8, A9, Z](schema: Schema.CaseClass9[A1, A2, A3, A4, A5, A6, A7, A8, A9, Z], discriminator: Option[String]): Decoder[Z] = {
     decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(buffer(0).asInstanceOf[A1], buffer(1).asInstanceOf[A2], buffer(2).asInstanceOf[A3], buffer(3).asInstanceOf[A4], buffer(4).asInstanceOf[A5], buffer(5).asInstanceOf[A6], buffer(6).asInstanceOf[A7], buffer(7).asInstanceOf[A8], buffer(8).asInstanceOf[A9])
     }
   }
 
-  def decodeCaseClass10[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, Z](schema: Schema.CaseClass10[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, Z], discriminator: Int): Decoder[Z] = {
+  def decodeCaseClass10[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, Z](schema: Schema.CaseClass10[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, Z], discriminator: Option[String]): Decoder[Z] = {
     decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(buffer(0).asInstanceOf[A1], buffer(1).asInstanceOf[A2], buffer(2).asInstanceOf[A3], buffer(3).asInstanceOf[A4], buffer(4).asInstanceOf[A5], buffer(5).asInstanceOf[A6], buffer(6).asInstanceOf[A7], buffer(7).asInstanceOf[A8], buffer(8).asInstanceOf[A9], buffer(9).asInstanceOf[A10])
     }
   }
 
-  def decodeCaseClass11[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, Z](schema: Schema.CaseClass11[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, Z], discriminator: Int): Decoder[Z] = {
+  def decodeCaseClass11[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, Z](schema: Schema.CaseClass11[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, Z], discriminator: Option[String]): Decoder[Z] = {
     decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(buffer(0).asInstanceOf[A1], buffer(1).asInstanceOf[A2], buffer(2).asInstanceOf[A3], buffer(3).asInstanceOf[A4], buffer(4).asInstanceOf[A5], buffer(5).asInstanceOf[A6], buffer(6).asInstanceOf[A7], buffer(7).asInstanceOf[A8], buffer(8).asInstanceOf[A9], buffer(9).asInstanceOf[A10], buffer(10).asInstanceOf[A11])
     }
   }
 
-  def decodeCaseClass12[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, Z](schema: Schema.CaseClass12[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, Z], discriminator: Int): Decoder[Z] = {
+  def decodeCaseClass12[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, Z](schema: Schema.CaseClass12[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, Z], discriminator: Option[String]): Decoder[Z] = {
     decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(buffer(0).asInstanceOf[A1], buffer(1).asInstanceOf[A2], buffer(2).asInstanceOf[A3], buffer(3).asInstanceOf[A4], buffer(4).asInstanceOf[A5], buffer(5).asInstanceOf[A6], buffer(6).asInstanceOf[A7], buffer(7).asInstanceOf[A8], buffer(8).asInstanceOf[A9], buffer(9).asInstanceOf[A10], buffer(10).asInstanceOf[A11], buffer(11).asInstanceOf[A12])
     }
   }
 
-  def decodeCaseClass13[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, Z](schema: Schema.CaseClass13[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, Z], discriminator: Int): Decoder[Z] = {
+  def decodeCaseClass13[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, Z](schema: Schema.CaseClass13[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, Z], discriminator: Option[String]): Decoder[Z] = {
     decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(buffer(0).asInstanceOf[A1], buffer(1).asInstanceOf[A2], buffer(2).asInstanceOf[A3], buffer(3).asInstanceOf[A4], buffer(4).asInstanceOf[A5], buffer(5).asInstanceOf[A6], buffer(6).asInstanceOf[A7], buffer(7).asInstanceOf[A8], buffer(8).asInstanceOf[A9], buffer(9).asInstanceOf[A10], buffer(10).asInstanceOf[A11], buffer(11).asInstanceOf[A12], buffer(12).asInstanceOf[A13])
     }
   }
 
-  def decodeCaseClass14[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, Z](schema: Schema.CaseClass14[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, Z], discriminator: Int): Decoder[Z] = {
+  def decodeCaseClass14[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, Z](schema: Schema.CaseClass14[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, Z], discriminator: Option[String]): Decoder[Z] = {
     decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(
         buffer(0).asInstanceOf[A1],
@@ -827,7 +831,7 @@ private[circe] trait Codecs {
     }
   }
 
-  def decodeCaseClass15[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, Z](schema: Schema.CaseClass15[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, Z], discriminator: Int): Decoder[Z] = {
+  def decodeCaseClass15[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, Z](schema: Schema.CaseClass15[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, Z], discriminator: Option[String]): Decoder[Z] = {
     decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(
         buffer(0).asInstanceOf[A1],
@@ -849,7 +853,7 @@ private[circe] trait Codecs {
     }
   }
 
-  def decodeCaseClass16[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, Z](schema: Schema.CaseClass16[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, Z], discriminator: Int): Decoder[Z] = {
+  def decodeCaseClass16[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, Z](schema: Schema.CaseClass16[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, Z], discriminator: Option[String]): Decoder[Z] = {
     decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(
         buffer(0).asInstanceOf[A1],
@@ -872,7 +876,7 @@ private[circe] trait Codecs {
     }
   }
 
-  def decodeCaseClass17[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, Z](schema: Schema.CaseClass17[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, Z], discriminator: Int): Decoder[Z] = {
+  def decodeCaseClass17[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, Z](schema: Schema.CaseClass17[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, Z], discriminator: Option[String]): Decoder[Z] = {
     decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(
         buffer(0).asInstanceOf[A1],
@@ -896,7 +900,7 @@ private[circe] trait Codecs {
     }
   }
 
-  def decodeCaseClass18[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, Z](schema: Schema.CaseClass18[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, Z], discriminator: Int): Decoder[Z] = {
+  def decodeCaseClass18[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, Z](schema: Schema.CaseClass18[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, Z], discriminator: Option[String]): Decoder[Z] = {
     decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(
         buffer(0).asInstanceOf[A1],
@@ -921,7 +925,7 @@ private[circe] trait Codecs {
     }
   }
 
-  def decodeCaseClass19[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, Z](schema: Schema.CaseClass19[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, Z], discriminator: Int): Decoder[Z] = {
+  def decodeCaseClass19[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, Z](schema: Schema.CaseClass19[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, Z], discriminator: Option[String]): Decoder[Z] = {
     decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(
         buffer(0).asInstanceOf[A1],
@@ -947,7 +951,7 @@ private[circe] trait Codecs {
     }
   }
 
-  def decodeCaseClass20[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20, Z](schema: Schema.CaseClass20[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20, Z], discriminator: Int): Decoder[Z] = {
+  def decodeCaseClass20[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20, Z](schema: Schema.CaseClass20[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20, Z], discriminator: Option[String]): Decoder[Z] = {
     decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(
         buffer(0).asInstanceOf[A1],
@@ -974,7 +978,7 @@ private[circe] trait Codecs {
     }
   }
 
-  def decodeCaseClass21[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20, A21, Z](schema: Schema.CaseClass21[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20, A21, Z], discriminator: Int): Decoder[Z] = {
+  def decodeCaseClass21[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20, A21, Z](schema: Schema.CaseClass21[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20, A21, Z], discriminator: Option[String]): Decoder[Z] = {
     decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(
         buffer(0).asInstanceOf[A1],
@@ -1002,7 +1006,7 @@ private[circe] trait Codecs {
     }
   }
 
-  def decodeCaseClass22[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20, A21, A22, Z](schema: Schema.CaseClass22[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20, A21, A22, Z], discriminator: Int): Decoder[Z] = {
+  def decodeCaseClass22[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20, A21, A22, Z](schema: Schema.CaseClass22[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20, A21, A22, Z], discriminator: Option[String]): Decoder[Z] = {
     decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(
         buffer(0).asInstanceOf[A1],
@@ -1031,65 +1035,82 @@ private[circe] trait Codecs {
     }
   }
 
-  private def decodeFields[Z](caseClassSchema: Schema.Record[Z], discriminator: Int): Decoder[Array[Any]] = new Decoder[Array[Any]] {
-    override def apply(c: HCursor) = {
-      val fields            = caseClassSchema.fields
-      val buffer            = Array.ofDim[Any](fields.length)
-      val fieldNames        = fields.map(_.name.asInstanceOf[String]).toArray
-      val schemas           = fields.map(_.schema).toArray
-      val fieldAliases      = fields.flatMap { case Schema.Field(name, _, annotations, _, _, _) =>
-        val aliases = annotations.collectFirst { case a: fieldNameAliases => a.aliases }.getOrElse(Nil)
-        aliases.map(_ -> fieldNames.indexOf(name)) :+ (name -> fieldNames.indexOf(name))
-      }.toMap
-      val rejectExtraFields = caseClassSchema.annotations.collectFirst { case _: rejectExtraFields => () }.isDefined
+  private def decodeFields[Z](schema: Schema.Record[Z], discriminator: Option[String]): Decoder[Array[Any]] = new Decoder[Array[Any]] {
 
-      c.keys match {
-        case None       => Left(DecodingFailure("No fields found", c.history))
-        case Some(keys) =>
-          try {
-            var i = 0
-            keys.foreach { key =>
-              fieldAliases.getOrElse(key, -1) match {
-                case -1  =>
-                  if (i != discriminator && rejectExtraFields)
-                    throw DecodingFailure(s"Extra field: $key", c.history)
-                case idx =>
-                  if (buffer(idx) != null) throw DecodingFailure(s"Duplicate field: $key", c.history)
-                  else
-                    c.get(key)(decodeSchema(schemas(idx))) match {
-                      case Left(value)  => throw DecodingFailure(s"Failed to decode field: $key", c.history)
-                      case Right(value) => buffer(idx) = value
-                    }
-              }
-              i += 1
-            }
+    val len      = schema.fields.length
+    val fields   = new Array[Schema.Field[Z, _]](len)
+    val decoders = new Array[Decoder[_]](len)
+    val names    = Array.newBuilder[String]
+    val aliases  = new util.HashMap[String, Int](len * 2)
 
-            i = 0
-            while (i < fields.length) {
-              if (buffer(i) == null) {
-                if ((fields(i).optional || fields(i).transient) && fields(i).defaultValue.isDefined) {
-                  buffer(i) = fields(i).defaultValue.get
-                } else {
-                  val schema = fields(i).schema match {
-                    case l @ Schema.Lazy(_) => l.schema
-                    case _                  => schemas(i)
-                  }
+    var i = 0
+    schema.fields.foreach { field =>
+      fields(i) = field
+      decoders(i) = decodeSchema(field.schema)
+      val name = field.name.asInstanceOf[String]
+      names += name
+      aliases.put(name, i)
+      field.annotations.foreach {
+        case fna: fieldNameAliases => fna.aliases.foreach(a => aliases.put(a, i))
+        case _                     =>
+      }
+      i += 1
+    }
 
-                  schema match {
-                    case collection: Schema.Collection[_, _] => buffer(i) = collection.empty
-                    case _: Schema.Optional[_]               => buffer(i) = None
-                    case _                                   =>
-                      throw DecodingFailure(s"Failed to decode field: ${fields(i).name}", c.history)
-                  }
+    discriminator.foreach { name =>
+      names += name
+      aliases.put(name, len)
+    }
+
+    val rejectExtraFields = schema.annotations.exists(_.isInstanceOf[rejectExtraFields])
+
+    override def apply(c: HCursor): Decoder.Result[Array[Any]] = {
+      val buffer = Array.ofDim[Any](len)
+      val keys   = c.keys.getOrElse(Seq.empty)
+
+      try {
+        var i = 0
+        keys.foreach { key =>
+          aliases.getOrDefault(key, -1) match {
+            case -1 if rejectExtraFields =>
+              throw DecodingFailure(s"Extra field: $key", c.history)
+            case idx if idx == len       => // check discriminator?
+            case idx                     =>
+              if (buffer(idx) != null) throw DecodingFailure(s"Duplicate field: $key", c.history)
+              else
+                c.get(key)(decoders(idx)) match {
+                  case Left(value)  => throw DecodingFailure(s"Failed to decode field: $key", c.history)
+                  case Right(value) => buffer(idx) = value
                 }
-              }
-              i += 1
-            }
-
-            Right(buffer)
-          } catch {
-            case e: DecodingFailure => Left(e)
           }
+          i += 1
+        }
+        i = 0
+        while (i < len) {
+          if (buffer(i) == null) {
+            val field = fields(i)
+            if ((field.optional || field.transient) && field.defaultValue.isDefined) {
+              buffer(i) = field.defaultValue.get
+            } else {
+              val schema = field.schema match {
+                case l @ Schema.Lazy(_) => l.schema
+                case s                  => s
+              }
+
+              schema match {
+                case collection: Schema.Collection[_, _] => buffer(i) = collection.empty
+                case _: Schema.Optional[_]               => buffer(i) = None
+                case _                                   =>
+                  throw DecodingFailure(s"Failed to decode field: ${fields(i).name}", c.history)
+              }
+            }
+          }
+          i += 1
+        }
+
+        Right(buffer)
+      } catch {
+        case e: DecodingFailure => Left(e)
       }
     }
   }
