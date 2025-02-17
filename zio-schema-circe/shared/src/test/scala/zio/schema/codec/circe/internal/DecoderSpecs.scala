@@ -672,19 +672,44 @@ private[circe] trait DecoderSpecs {
         assertDecodesToError(
           PersonWithRejectExtraFields.schema,
           """{"name":"test","age":10,"extraField":10}""",
-          DecodingFailure("Extra fields found", Nil),
+          DecodingFailure("Extra field: extraField", Nil),
         ) &>
           assertDecodesToError(
             schemaObject.annotate(rejectExtraFields()),
             """{"extraField":10}""",
-            DecodingFailure("Extra fields found", Nil),
+            DecodingFailure("Extra field: extraField", Nil),
           )
       },
       test("transient field annotation") {
         assertDecodes(
           searchRequestWithTransientFieldSchema,
+          """{"query":"foo","page":10,"size":20,"nextPage":"bar"}""",
+          SearchRequestWithTransientField("foo", 10, 20, "bar"),
+        )
+      },
+      test("transient field annotation with default value in class definition") {
+        assertDecodes(
+          searchRequestWithTransientFieldSchema,
           """{"query":"test","page":0,"size":10}""",
-          SearchRequestWithTransientField("test", 0, 10, Schema[String].defaultValue.getOrElse("")),
+          SearchRequestWithTransientField("test", 0, 10),
+        )
+      },
+      test("transient field annotation with default value implicitly available for the field type") {
+        case class CaseClassWithTransientField(transient: String)
+        assertDecodes(
+          Schema.CaseClass1[String, CaseClassWithTransientField](
+            id0 = TypeId.fromTypeName("SearchRequestWithTransientField"),
+            field0 = Schema.Field(
+              name0 = "transient",
+              schema0 = Schema[String],
+              get0 = _.transient,
+              set0 = (x, transient) => x.copy(transient = transient),
+              annotations0 = Chunk(new transientField()),
+            ),
+            defaultConstruct0 = new CaseClassWithTransientField(_),
+          ),
+          """{}""",
+          CaseClassWithTransientField(Schema[String].defaultValue.toOption.get),
         )
       },
       test("fieldDefaultValue") {
@@ -720,6 +745,13 @@ private[circe] trait DecoderSpecs {
           recordWithOptionSchema,
           """{"foo":"s","bar":null}""",
           ListMap[String, Any]("foo" -> Some("s"), "bar" -> None),
+        )
+      },
+      test("with transient fields encoded as implicitly available schema default values") {
+        assertDecodes(
+          recordWithTransientSchema,
+          """{}""",
+          ListMap[String, Any]("foo" -> "", "bar" -> 0),
         )
       },
       test("case class with option fields encoded as null") {
@@ -769,6 +801,43 @@ private[circe] trait DecoderSpecs {
           WithComplexOptionField(Some(Order(1, BigDecimal.valueOf(10), "test"))),
         )
       },
+      suite("case class with more than 64 fields")(
+        test("decodes required and optional fields") {
+          assertDecodes(
+            BigProduct.schema,
+            """{"f00":true}""",
+            BigProduct(f00 = true, f67 = None, f68 = Nil, f69 = Vector.empty),
+          )
+        },
+        test("fails when missing required fields") {
+          assertDecodesToError(
+            BigProduct.schema,
+            """{}""",
+            DecodingFailure("Missing field: f00", Nil),
+          )
+        },
+        test("rejects extra fields") {
+          assertDecodesToError(
+            BigProduct.schema.annotate(rejectExtraFields()),
+            """{"f00":true,"extraField":10}""",
+            DecodingFailure("Unexpected field: extraField", Nil),
+          )
+        },
+        test("rejects duplicated fields") {
+          assertDecodesToError(
+            BigProduct.schema,
+            """{"f00":true,"f01":10,"f-01":8}""",
+            DecodingFailure("Duplicate field: f01", Nil),
+          )
+        },
+        test("decodes field name with alias - id") {
+          assertDecodes(
+            BigProduct.schema,
+            """{"f00":true,"f-01":123}""",
+            BigProduct(f00 = true, f01 = Some(123.toByte), f67 = None, f68 = Nil, f69 = Vector.empty),
+          )
+        },
+      ),
       test("recursive data structure")(
         assertDecodes(
           Schema[Recursive],
@@ -797,13 +866,6 @@ private[circe] trait DecoderSpecs {
           Schema[Enumeration2],
           """{"oneOf":{"_type":"StringValue2","value":"foo2"}}""",
           Enumeration2(StringValue2("foo2")),
-        )
-      },
-      test("case class") {
-        assertDecodes(
-          searchRequestWithTransientFieldSchema,
-          """{"query":"foo","page":10,"size":20,"nextPage":"bar"}""",
-          SearchRequestWithTransientField("foo", 10, 20, "bar"),
         )
       },
       suite("with discriminator")(
@@ -845,8 +907,22 @@ private[circe] trait DecoderSpecs {
         test("case name aliases - type in the last place") {
           assertDecodes(
             Subscription.schema,
-            """{"amount":1000, "type":"onetime"}""",
+            """{"amount":1000,"type":"onetime"}""",
             OneTime(1000),
+          )
+        },
+        test("case name - illegal discriminator value") {
+          assertDecodesToError(
+            Subscription.schema,
+            """{"amount":1000,"type":123}""",
+            DecodingFailure("Malformed subtype: 123", List(CursorOp.DownField("type"))),
+          )
+        },
+        test("case name - missing discriminator field") {
+          assertDecodesToError(
+            Subscription.schema,
+            """{"amount":1000}""",
+            DecodingFailure("Missing subtype: type", Nil),
           )
         },
         test("case name - empty fields") {
@@ -856,8 +932,40 @@ private[circe] trait DecoderSpecs {
             Subscription.Unlimited(None),
           )
         },
+        suite("of case classes and case objects with more than 64 cases")(
+          test("with caseName") {
+            assertDecodes(
+              Schema[BigEnum3],
+              """{"b":123,"type":"Case_00"}""",
+              BigEnum3.Case00(123.toByte),
+            ) &>
+              assertDecodesToError(
+                Schema[BigEnum3],
+                """{"type":"Case00"}""",
+                DecodingFailure("Unrecognized subtype: Case00", List(CursorOp.DownField("type"))),
+              )
+          },
+          test("with caseAliases") {
+            assertDecodes(
+              Schema[BigEnum3],
+              """{"type":"Case-00","b":123}""",
+              BigEnum3.Case00(123.toByte),
+            )
+          },
+          test("fails on missing discriminator field") {
+            assertDecodesToError(Schema[BigEnum3], """{"b":123}""", DecodingFailure("Missing subtype: type", Nil)) &>
+              assertDecodesToError(Schema[BigEnum3], """{}""", DecodingFailure("Missing subtype: type", Nil))
+          },
+          test("fails on invalid case") {
+            assertDecodesToError(
+              Schema[BigEnum3],
+              """{"type":"CaseXX"}""",
+              DecodingFailure("Unrecognized subtype: CaseXX", List(CursorOp.DownField("type"))),
+            )
+          },
+        ),
       ),
-      suite("with no discriminator")(
+      suite("without discriminator")(
         test("case name annotation") {
           assertDecodes(
             PaymentMethod.schema,
@@ -865,18 +973,72 @@ private[circe] trait DecoderSpecs {
             WireTransfer("foo", "bar"),
           )
         },
-        test("example 1") {
+        test("missing discriminator") {
+          assertDecodesToError(
+            PaymentMethod.schema,
+            "{}",
+            DecodingFailure("Missing subtype", Nil),
+          )
+        },
+        test("illegal discriminator case") {
+          assertDecodesToError(
+            PaymentMethod.schema,
+            """{"cash":{}}""",
+            DecodingFailure("Unrecognized subtype: cash", Nil),
+          )
+        },
+        suite("of case classes and case objects with more than 64 cases")(
+          test("with caseName") {
+            assertDecodes(
+              Schema[BigEnum2],
+              """{"Case_00":{"b":123}}""",
+              BigEnum2.Case00(123.toByte),
+            ) &>
+              assertDecodesToError(
+                Schema[BigEnum2],
+                """{"Case00":{}}""",
+                DecodingFailure("Unrecognized subtype: Case00", Nil),
+              )
+          },
+          test("with caseAliases") {
+            assertDecodes(
+              Schema[BigEnum2],
+              """{"Case-00":{"b":123}}""",
+              BigEnum2.Case00(123.toByte),
+            )
+          },
+          test("no discriminator key") {
+            assertDecodesToError(Schema[BigEnum2], "{}", DecodingFailure("Missing subtype", Nil))
+          },
+          test("invalid case") {
+            assertDecodesToError(
+              Schema[BigEnum2],
+              """{"CaseXX":{}}""",
+              DecodingFailure("Unrecognized subtype: CaseXX", Nil),
+            )
+          },
+        ),
+      ),
+      suite("with no discriminator")(
+        test("decodes first case") {
           assertDecodes(
             Prompt.schema,
             """{"value":"hello"}""",
             Prompt.Single("hello"),
           )
         },
-        test("example 2") {
+        test("decodes second case") {
           assertDecodes(
             Prompt.schema,
             """{"value":["hello","world"]}""",
             Prompt.Multiple(List("hello", "world")),
+          )
+        },
+        test("fails on unrecognized case") {
+          assertDecodesToError(
+            Prompt.schema,
+            """{"value":5}""",
+            DecodingFailure("None of the subtypes could decode the data", Nil),
           )
         },
       ),

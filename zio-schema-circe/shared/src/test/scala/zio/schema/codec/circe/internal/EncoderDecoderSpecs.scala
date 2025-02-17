@@ -1,6 +1,7 @@
 package zio.schema.codec.circe.internal
 
 import zio.schema._
+import zio.schema.codec.circe.internal.Data._
 import zio.stream.ZStream
 import zio.test._
 import zio.{Console, ZIO}
@@ -76,11 +77,16 @@ private[circe] trait EncoderDecoderSpecs {
             Console.printLineError(s"Decoding failed for input ${new String(encoded.toArray)}\nError Message: $err")
           }
       }
+      .map(_.toList)
+      .head
       .tap(decoded => Console.printLine(s"Decoded: $decoded").when(debug).ignore)
       .either
       .map { result =>
         assertTrue(
-          compare(value, result.toOption.get.head),
+          result.toOption match {
+            case None         => false
+            case Some(value2) => compare(value, value2)
+          },
         )
       }
 
@@ -128,6 +134,38 @@ private[circe] trait EncoderDecoderSpecs {
           Right(Set(1, 2)).asInstanceOf[scala.util.Either[Set[Any], Set[Any]]],
         )
       },
+    ),
+    suite("record")(
+      test("ADT with generic records and discriminator field") {
+        assertEncodesThenDecodes(
+          OneOf4.schema,
+          RecordExampleWithDiscriminator(f1 = Some("test")),
+        )
+      },
+    ),
+    suite("enumeration")(
+      suite("of case classes and case objects with more than 64 cases")(
+        test("without annotation")(
+          assertEncodesThenDecodes(Schema[BigEnum2], BigEnum2.Case69),
+        ),
+        test("with caseName")(
+          assertEncodesThenDecodes(Schema[BigEnum2], BigEnum2.Case00(123.toByte)),
+        ),
+        test("with caseAliases")(
+          assertEncodesThenDecodes(Schema[BigEnum2], BigEnum2.Case00(123.toByte)),
+        ),
+      ),
+      suite("of case classes and case objects with more than 64 cases and discriminator field")(
+        test("without annotation")(
+          assertEncodesThenDecodes(Schema[BigEnum3], BigEnum3.Case69),
+        ),
+        test("with caseName")(
+          assertEncodesThenDecodes(Schema[BigEnum3], BigEnum3.Case00(123.toByte)),
+        ),
+        test("with caseAliases")(
+          assertEncodesThenDecodes(Schema[BigEnum3], BigEnum3.Case00(123.toByte)),
+        ),
+      ),
     ),
   )
 }

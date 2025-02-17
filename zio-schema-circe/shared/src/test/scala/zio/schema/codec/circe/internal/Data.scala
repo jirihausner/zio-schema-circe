@@ -120,7 +120,7 @@ protected[circe] object Data {
     query: String,
     page: Int,
     size: Int,
-    @transientField nextPage: String = "",
+    @transientField nextPage: String = "transient",
   )
 
   val searchRequestWithTransientFieldSchema: Schema[SearchRequestWithTransientField] =
@@ -161,6 +161,25 @@ protected[circe] object Data {
         Schema.Primitive(StandardType.IntType).optional,
         get0 = (p: ListMap[String, _]) => p("bar").asInstanceOf[Option[Int]],
         set0 = (p: ListMap[String, _], v: Option[Int]) => p.updated("bar", v),
+      ),
+  )
+
+  val recordWithTransientSchema: Schema[ListMap[String, _]] = Schema.record(
+    TypeId.Structural,
+    Schema.Field(
+      "foo",
+      Schema.Primitive(StandardType.StringType),
+      annotations0 = Chunk(transientField()),
+      get0 = (p: ListMap[String, _]) => p("foo").asInstanceOf[String],
+      set0 = (p: ListMap[String, _], v: String) => p.updated("foo", v),
+    ),
+    Schema
+      .Field(
+        "bar",
+        Schema.Primitive(StandardType.IntType),
+        annotations0 = Chunk(transientField()),
+        get0 = (p: ListMap[String, _]) => p("bar").asInstanceOf[Int],
+        set0 = (p: ListMap[String, _], v: Int) => p.updated("bar", v),
       ),
   )
 
@@ -301,6 +320,7 @@ protected[circe] object Data {
   object Order {
     implicit lazy val schema: Schema[Order] = DeriveSchema.gen[Order]
   }
+
   @noDiscriminator sealed trait Prompt
 
   object Prompt {
@@ -380,6 +400,39 @@ protected[circe] object Data {
   object AllOptionalFields {
     implicit lazy val schema: Schema[AllOptionalFields] = DeriveSchema.gen[AllOptionalFields]
   }
+
+  @discriminatorName("type")
+  sealed trait OneOf4
+
+  object OneOf4 {
+    implicit val schema: Schema[OneOf4] = DeriveSchema.gen
+  }
+
+  @rejectExtraFields case class RecordExampleWithDiscriminator(
+    @fieldName("$f1") f1: Option[String], // the only field that does not have a default value
+    @fieldNameAliases("field2") f2: Option[String] = None,
+    @transientField f3: Option[String] = None,
+    f4: Option[String] = None,
+    f5: Option[String] = None,
+    f6: Option[String] = None,
+    f7: Option[String] = None,
+    f8: Option[String] = None,
+    f9: Option[String] = None,
+    f10: Option[String] = None,
+    f11: Option[String] = None,
+    f12: Option[String] = None,
+    f13: Option[String] = None,
+    f14: Option[String] = None,
+    f15: Option[String] = None,
+    f16: Option[String] = None,
+    f17: Option[String] = None,
+    f18: Option[String] = None,
+    f19: Option[String] = None,
+    f20: Option[String] = None,
+    f21: Option[String] = None,
+    f22: Option[String] = None,
+    @fieldName("$f23") f23: Option[String] = None,
+  ) extends OneOf4
 
   case class RecordExample(
     @fieldName("$f1") f1: Option[String], // the only field that does not have a default value
