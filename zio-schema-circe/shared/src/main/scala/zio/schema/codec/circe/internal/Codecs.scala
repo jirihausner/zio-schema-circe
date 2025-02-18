@@ -36,12 +36,12 @@ private[circe] trait Codecs {
   def decodeChunk[A](implicit decoder: Decoder[A]): Decoder[Chunk[A]] =
     Decoder.decodeVector(decoder).map(Chunk.fromIterable)
 
-  def encodeSuspend[A](implicit encoder: => Encoder[A]): Encoder[A] = new Encoder[A] {
+  def encodeSuspend[A](encoder: => Encoder[A]): Encoder[A] = new Encoder[A] {
     lazy val underlying: Encoder[A] = encoder
     def apply(a: A): Json           = underlying(a)
   }
 
-  def decodeSuspend[A](implicit decoder: => Decoder[A]): Decoder[A] = new Decoder[A] {
+  def decodeSuspend[A](decoder: => Decoder[A]): Decoder[A] = new Decoder[A] {
     lazy val underlying: Decoder[A]          = decoder
     def apply(c: HCursor): Decoder.Result[A] = underlying(c)
   }
