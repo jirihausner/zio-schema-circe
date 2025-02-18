@@ -21,8 +21,17 @@ private[circe] trait Codecs {
 
   type DiscriminatorTuple = Option[(String, String)]
 
-  def encodeChunk[A](implicit encoder: Encoder[A]): Encoder.AsArray[Chunk[A]] =
-    Encoder.AsArray.instance[Chunk[A]](_.map(encoder(_)).toVector)
+  def encodeChunk[A](implicit encoder: Encoder[A]): Encoder.AsArray[Chunk[A]] = new Encoder.AsArray[Chunk[A]] {
+
+    final def encodeArray(chunk: Chunk[A]): Vector[Json] = {
+      val builder  = Vector.newBuilder[Json]
+      val iterator = chunk.iterator
+      while (iterator.hasNext) {
+        builder += encoder(iterator.next())
+      }
+      builder.result()
+    }
+  }
 
   def decodeChunk[A](implicit decoder: Decoder[A]): Decoder[Chunk[A]] =
     Decoder.decodeVector(decoder).map(Chunk.fromIterable)
@@ -182,33 +191,22 @@ private[circe] trait Codecs {
     config: CirceCodec.Config,
     discriminatorTuple: DiscriminatorTuple = None,
   ): Encoder[A] = schema match {
-    case Schema.Primitive(standardType, _)                     => encodePrimitive(standardType)
-    case Schema.Sequence(schema, _, g, _, _)                   =>
-      encodeChunk(encodeSchema(schema, config, discriminatorTuple)).contramap(g)
-    case Schema.NonEmptySequence(schema, _, g, _, _)           =>
-      encodeChunk(encodeSchema(schema, config, discriminatorTuple)).contramap(g)
-    case Schema.Map(ks, vs, _)                                 => encodeMap(ks, vs, config, discriminatorTuple)
-    case Schema.NonEmptyMap(ks: Schema[kt], vs: Schema[vt], _) =>
-      encodeMap(ks, vs, config, discriminatorTuple)
-        .contramap[NonEmptyMap[kt, vt]](_.toMap.asInstanceOf[Map[kt, vt]])
-        .asInstanceOf[Encoder[A]]
-    case Schema.Set(s, _)                                      =>
-      encodeChunk(encodeSchema(s, config, discriminatorTuple)).contramap(m => Chunk.fromIterable(m))
-    case Schema.Transform(c, _, g, a, _)                       =>
+    case Schema.Primitive(standardType, _)   => encodePrimitive(standardType)
+    case Schema.Optional(schema, _)          => Encoder.encodeOption(encodeSchema(schema, config))
+    case Schema.Tuple2(l, r, _)              => Encoder.encodeTuple2(encodeSchema(l, config), encodeSchema(r, config))
+    case Schema.Sequence(schema, _, g, _, _) => encodeChunk(encodeSchema(schema, config)).contramap(g)
+    case Schema.NonEmptySequence(schema, _, g, _, _) => encodeChunk(encodeSchema(schema, config)).contramap(g)
+    case Schema.Map(ks, vs, _)                       => encodeMap(ks, vs, config)
+    case Schema.NonEmptyMap(ks, vs, _)               => encodeMap(ks, vs, config).contramap(_.toMap)
+    case Schema.Set(s, _)                            => Encoder.encodeSet(encodeSchema(s, config))
+    case Schema.Transform(c, _, g, a, _)             =>
       encodeTransform(a.foldLeft(c)((s, a) => s.annotate(a)), g, config, discriminatorTuple)
-    case Schema.Tuple2(l, r, _)                                =>
-      Encoder.encodeTuple2(encodeSchema(l, config, discriminatorTuple), encodeSchema(r, config, discriminatorTuple))
-    case Schema.Optional(schema, _)         => Encoder.encodeOption(encodeSchema(schema, config, discriminatorTuple))
-    case Schema.Fail(_, _)                  => Encoder.encodeUnit.contramap(_ => ())
+    case Schema.Fail(_, _)                           => Encoder.encodeUnit.contramap(_ => ())
+    case Schema.Either(left, right, _)               =>
+      Encoder.encodeEither("Left", "Right")(encodeSchema(left, config), encodeSchema(right, config))
+    case Schema.Fallback(left, right, _, _) => encodeFallback(encodeSchema(left, config), encodeSchema(right, config))
+    case l @ Schema.Lazy(_)                 => encodeSuspend(encodeSchema(l.schema, config))
     case s: Schema.GenericRecord            => encodeRecord(s, config, discriminatorTuple)
-    case Schema.Either(left, right, _)      =>
-      Encoder.encodeEither("Left", "Right")(
-        encodeSchema(left, config, discriminatorTuple),
-        encodeSchema(right, config, discriminatorTuple),
-      )
-    case Schema.Fallback(left, right, _, _) =>
-      encodeFallback(encodeSchema(left, config, discriminatorTuple), encodeSchema(right, config, discriminatorTuple))
-    case l @ Schema.Lazy(_)                 => encodeSuspend(encodeSchema(l.schema, config, discriminatorTuple))
     case s: Schema.Record[A]                => encodeCaseClass(s, config, discriminatorTuple)
     case s: Schema.Enum[A]                  => encodeEnum(s, config)
     case d @ Schema.Dynamic(_)              => encodeDynamic(d, config)
@@ -218,30 +216,28 @@ private[circe] trait Codecs {
 
   def decodeSchemaSlow[A](schema: Schema[A], discriminator: Option[String] = None): Decoder[A] = schema match {
     case Schema.Primitive(standardType, _)              => decodePrimitive(standardType)
-    case Schema.Optional(codec, _)                      => Decoder.decodeOption(decodeSchema(codec, discriminator))
-    case Schema.Tuple2(left, right, _)                  =>
-      Decoder.decodeTuple2(decodeSchema(left, discriminator), decodeSchema(right, discriminator))
-    case Schema.Transform(c, f, _, a, _)                =>
-      decodeSchema(a.foldLeft(c)((s, a) => s.annotate(a)), discriminator).emap(f)
-    case Schema.Sequence(codec, f, _, _, _)             => decodeChunk(decodeSchema(codec, discriminator)).map(f)
-    case s @ Schema.NonEmptySequence(codec, _, _, _, _) =>
-      decodeChunk(decodeSchema(codec, discriminator)).map(s.fromChunk)
+    case Schema.Optional(codec, _)                      => Decoder.decodeOption(decodeSchema(codec))
+    case Schema.Tuple2(left, right, _)                  => Decoder.decodeTuple2(decodeSchema(left), decodeSchema(right))
+    case Schema.Sequence(codec, f, _, _, _)             => decodeChunk(decodeSchema(codec)).map(f)
+    case s @ Schema.NonEmptySequence(codec, _, _, _, _) => decodeChunk(decodeSchema(codec)).map(s.fromChunk)
     case Schema.Map(ks, vs, _)                          => decodeMap(ks, vs)
     case Schema.NonEmptyMap(ks, vs, _)                  =>
       decodeMap(ks, vs).emap(m => NonEmptyMap.fromMapOption(m).toRight("NonEmptyMap expected"))
-    case Schema.Set(s, _)                  => decodeChunk(decodeSchema(s, discriminator)).map(entries => entries.toSet)
-    case Schema.Fail(message, _)           => decodeFail(message)
-    case s: Schema.GenericRecord           => decodeRecord(s, discriminator)
-    case Schema.Either(left, right, _)     =>
-      Decoder.decodeEither("Left", "Right")(decodeSchema(left, discriminator), decodeSchema(right, discriminator))
-    case s @ Schema.Fallback(_, _, _, _)   => decodeFallback(s)
-    case l @ Schema.Lazy(_)                => decodeSuspend(decodeSchema(l.schema, discriminator))
-    case s @ Schema.CaseClass0(_, _, _)    => decodeCaseClass0(s, discriminator)
-    case s @ Schema.CaseClass1(_, _, _, _) => decodeCaseClass1(s, discriminator)
-    case s @ Schema.CaseClass2(_, _, _, _, _)                                   => decodeCaseClass2(s, discriminator)
-    case s @ Schema.CaseClass3(_, _, _, _, _, _)                                => decodeCaseClass3(s, discriminator)
-    case s @ Schema.CaseClass4(_, _, _, _, _, _, _)                             => decodeCaseClass4(s, discriminator)
-    case s @ Schema.CaseClass5(_, _, _, _, _, _, _, _)                          => decodeCaseClass5(s, discriminator)
+    case Schema.Set(s, _)                               => Decoder.decodeSet(decodeSchema(s))
+    case Schema.Transform(c, f, _, a, _)                =>
+      decodeSchema(a.foldLeft(c)((s, a) => s.annotate(a)), discriminator).emap(f)
+    case Schema.Fail(message, _)                        => decodeFail(message)
+    case Schema.Either(left, right, _)                  =>
+      Decoder.decodeEither("Left", "Right")(decodeSchema(left), decodeSchema(right))
+    case s @ Schema.Fallback(_, _, _, _)                => decodeFallback(s)
+    case l @ Schema.Lazy(_)                             => decodeSuspend(decodeSchema(l.schema))
+    case s: Schema.GenericRecord                        => decodeRecord(s, discriminator)
+    case s @ Schema.CaseClass0(_, _, _)                 => decodeCaseClass0(s, discriminator)
+    case s @ Schema.CaseClass1(_, _, _, _)              => decodeCaseClass1(s, discriminator)
+    case s @ Schema.CaseClass2(_, _, _, _, _)           => decodeCaseClass2(s, discriminator)
+    case s @ Schema.CaseClass3(_, _, _, _, _, _)        => decodeCaseClass3(s, discriminator)
+    case s @ Schema.CaseClass4(_, _, _, _, _, _, _)     => decodeCaseClass4(s, discriminator)
+    case s @ Schema.CaseClass5(_, _, _, _, _, _, _, _)  => decodeCaseClass5(s, discriminator)
     case s @ Schema.CaseClass6(_, _, _, _, _, _, _, _, _)                       => decodeCaseClass6(s, discriminator)
     case s @ Schema.CaseClass7(_, _, _, _, _, _, _, _, _, _)                    => decodeCaseClass7(s, discriminator)
     case s @ Schema.CaseClass8(_, _, _, _, _, _, _, _, _, _, _)                 => decodeCaseClass8(s, discriminator)
@@ -316,35 +312,24 @@ private[circe] trait Codecs {
     ks: Schema[K],
     vs: Schema[V],
     config: CirceCodec.Config,
-    discriminatorTuple: DiscriminatorTuple,
   ): Encoder[Map[K, V]] = encodeField(ks) match {
     case Some(keyEncoder) => Encoder.encodeMap(keyEncoder, encodeSchema(vs, config))
     case None             =>
-      encodeChunk(
-        Encoder.encodeTuple2(encodeSchema(ks, config, discriminatorTuple), encodeSchema(vs, config, discriminatorTuple)),
-      )
-        .contramap[Map[K, V]](Chunk.fromIterable)
+      encodeChunk(Encoder.encodeTuple2(encodeSchema(ks, config), encodeSchema(vs, config)))
+        .contramap(Chunk.fromIterable)
   }
 
   def decodeMap[K, V](ks: Schema[K], vs: Schema[V]): Decoder[Map[K, V]] = decodeField(ks) match {
     case Some(keyDecoder) => Decoder.decodeMap(keyDecoder, decodeSchema(vs))
     case None             =>
-      decodeChunk(
-        Decoder
-          .decodeTuple2(decodeSchema(ks), decodeSchema(vs)),
-      )
-        .map[Map[K, V]](_.toMap)
+      decodeChunk(Decoder.decodeTuple2(decodeSchema(ks), decodeSchema(vs)))
+        .map(_.toMap)
   }
 
   private def isEmptyJsonArray(json: Json): Boolean = json.asArray.map(_.isEmpty).getOrElse(false)
 
   def encodeDynamic(schema: Schema.Dynamic, config: CirceCodec.Config): Encoder[DynamicValue] = {
-    val directMapping = schema.annotations.exists {
-      case directDynamicMapping() => true
-      case _                      => false
-    }
-
-    if (directMapping) {
+    if (schema.annotations.exists(_.isInstanceOf[directDynamicMapping])) {
       new Encoder[DynamicValue] { encoder =>
         override def apply(a: DynamicValue): Json = a match {
           case DynamicValue.Record(_, values)              =>

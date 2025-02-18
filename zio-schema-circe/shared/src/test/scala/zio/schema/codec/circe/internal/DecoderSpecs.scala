@@ -719,6 +719,13 @@ private[circe] trait DecoderSpecs {
           FieldDefaultValueSearchRequest("test", 0, 10, "test"),
         )
       },
+      test("backticked field name") {
+        assertDecodes(
+          BacktickedFieldName.schema,
+          """{"x-api-key":"test"}""",
+          BacktickedFieldName("test"),
+        )
+      },
       test("field name with alias - id") {
         assertDecodes(
           Order.schema,

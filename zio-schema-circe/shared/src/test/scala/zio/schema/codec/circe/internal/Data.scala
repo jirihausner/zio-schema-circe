@@ -227,10 +227,10 @@ protected[circe] object Data {
 
   @discriminatorName("_type")
   sealed trait OneOf2
-  case class StringValue2(value: String)                       extends OneOf2
-  case class IntValue2(value: Int)                             extends OneOf2
-  case class BooleanValue2(value: Boolean)                     extends OneOf2
-  case class StringValue2Multi(value1: String, value2: String) extends OneOf2
+  case class StringValue2(value: String)                               extends OneOf2
+  case class IntValue2(value: Int)                                     extends OneOf2
+  case class BooleanValue2(value: Boolean)                             extends OneOf2
+  case class `StringValue2-Backticked`(value1: String, value2: String) extends OneOf2
 
   case class Enumeration2(oneOf: OneOf2)
 
@@ -240,11 +240,11 @@ protected[circe] object Data {
 
   @noDiscriminator
   sealed trait OneOf3
-  case class StringValue3(value: String)                       extends OneOf3
-  case class IntValue3(value: Int)                             extends OneOf3
-  case class BooleanValue3(value: Boolean)                     extends OneOf3
-  case class StringValue3Multi(value1: String, value2: String) extends OneOf3
-  case class Nested(oneOf: OneOf3)                             extends OneOf3
+  case class StringValue3(value: String)                               extends OneOf3
+  case class IntValue3(value: Int)                                     extends OneOf3
+  case class BooleanValue3(value: Boolean)                             extends OneOf3
+  case class `StringValue3-Backticked`(value1: String, value2: String) extends OneOf3
+  case class Nested(oneOf: OneOf3)                                     extends OneOf3
 
   case class Enumeration3(oneOf: OneOf3)
 
@@ -794,5 +794,11 @@ protected[circe] object Data {
 
   object BigProduct {
     implicit val schema: Schema[BigProduct] = DeriveSchema.gen
+  }
+
+  case class BacktickedFieldName(`x-api-key`: String)
+
+  object BacktickedFieldName {
+    implicit val schema: Schema[BacktickedFieldName] = DeriveSchema.gen
   }
 }

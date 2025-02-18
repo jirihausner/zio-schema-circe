@@ -602,6 +602,13 @@ private[circe] trait EncoderSpecs {
           """{"a":"s"}""",
         )
       },
+      test("case class with backticked field name") {
+        assertEncodes(
+          Schema[BacktickedFieldName],
+          BacktickedFieldName("test"),
+          """{"x-api-key":"test"}""",
+        )
+      },
     ),
     suite("enumeration")(
       test("of primitives") {
