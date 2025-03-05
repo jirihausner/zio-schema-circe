@@ -205,11 +205,11 @@ private[circe] trait Codecs {
     case Schema.Either(left, right, _)               =>
       Encoder.encodeEither("Left", "Right")(encodeSchema(left, config), encodeSchema(right, config))
     case Schema.Fallback(left, right, _, _) => encodeFallback(encodeSchema(left, config), encodeSchema(right, config))
-    case l @ Schema.Lazy(_)                 => encodeSuspend(encodeSchema(l.schema, config))
+    case s: Schema.Lazy[A]                  => encodeSuspend(encodeSchema(s.schema, config, discriminatorTuple))
     case s: Schema.GenericRecord            => encodeRecord(s, config, discriminatorTuple)
     case s: Schema.Record[A]                => encodeCaseClass(s, config, discriminatorTuple)
     case s: Schema.Enum[A]                  => encodeEnum(s, config)
-    case d @ Schema.Dynamic(_)              => encodeDynamic(d, config)
+    case s: Schema.Dynamic                  => encodeDynamic(s, config)
     case null                               =>
       throw new Exception(s"A captured schema is null, most likely due to wrong field initialization order")
   }
@@ -230,7 +230,7 @@ private[circe] trait Codecs {
     case Schema.Either(left, right, _)                  =>
       Decoder.decodeEither("Left", "Right")(decodeSchema(left), decodeSchema(right))
     case s @ Schema.Fallback(_, _, _, _)                => decodeFallback(s)
-    case l @ Schema.Lazy(_)                             => decodeSuspend(decodeSchema(l.schema))
+    case s: Schema.Lazy[_]                              => decodeSuspend(decodeSchema(s.schema, discriminator))
     case s: Schema.GenericRecord                        => decodeRecord(s, discriminator)
     case s @ Schema.CaseClass0(_, _, _)                 => decodeCaseClass0(s, discriminator)
     case s @ Schema.CaseClass1(_, _, _, _)              => decodeCaseClass1(s, discriminator)
@@ -270,7 +270,7 @@ private[circe] trait Codecs {
     case s @ Schema.CaseClass22(_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _) =>
       decodeCaseClass22(s, discriminator)
     case s: Schema.Enum[A]                                                                        => decodeEnum(s)
-    case d @ Schema.Dynamic(_)                                                                    => decodeDynamic(d)
+    case s: Schema.Dynamic                                                                        => decodeDynamic(s)
     case _ => throw new Exception(s"Missing a handler for decoding of schema ${schema.toString()}.")
   }
 
@@ -367,7 +367,7 @@ private[circe] trait Codecs {
             }
             Json.arr(maybeValues.flatten: _*)
           case DynamicValue.Primitive(value, standardType) => encodePrimitive(standardType)(value)
-          case DynamicValue.Singleton(_)                   => Json.obj()
+          case DynamicValue.Singleton(_)                   => EmptyJsonObj
           case DynamicValue.SomeValue(value)               => encoder(value)
           case DynamicValue.NoneValue                      => Json.Null
           case DynamicValue.Tuple(_, _)                    =>
@@ -632,9 +632,9 @@ private[circe] trait Codecs {
 
   private def isEmptyOptionalValue(schema: Schema.Field[_, _], value: Any, config: CirceCodec.Config) = {
     (config.ignoreEmptyCollections || schema.optional) && (value match {
-      case None           => true
-      case _: Iterable[_] => value.asInstanceOf[Iterable[_]].isEmpty
-      case _              => false
+      case None            => true
+      case it: Iterable[_] => it.isEmpty
+      case _               => false
     })
   }
 
@@ -719,7 +719,7 @@ private[circe] trait Codecs {
   def encodeCaseClass[A](schema: Schema.Record[A], config: CirceCodec.Config, discriminatorTuple: DiscriminatorTuple): Encoder[A] = new Encoder[A] {
 
     val nonTransientFields = schema.nonTransientFields.map(_.asInstanceOf[Schema.Field[A, Any]]).toArray
-    val fieldEncoders      = nonTransientFields.map(s => encodeSchema(s.schema, config, discriminatorTuple))
+    val fieldEncoders      = nonTransientFields.map(s => encodeSchema(s.schema, config))
     val discriminator      = discriminatorTuple.map { case (tag, name) =>
       KeyEncoder.encodeKeyString(tag) -> Encoder.encodeString(name)
     }

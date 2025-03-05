@@ -15,7 +15,6 @@ object CirceCodec {
   final case class Config(
     ignoreEmptyCollections: Boolean,
     ignoreNullValues: Boolean = true,
-    ignoreMalformedFields: Boolean = true,
     treatStreamsAsArrays: Boolean = false,
   )
 
@@ -98,8 +97,10 @@ object CirceCodec {
 
   object CirceDecoder {
 
-    final def decode[A](schema: Schema[A], json: String): Either[Error, A] =
-      parser.decode[A](json)(Codecs.decodeSchema(schema))
+    final def decode[A](schema: Schema[A], json: String): Either[Error, A] = {
+      implicit val decoder: Decoder[A] = Codecs.decodeSchema(schema)
+      parser.decode[A](json)
+    }
   }
 
   def schemaCodec[A](schema: Schema[A])(implicit config: Config = Config.default): Codec[A] =

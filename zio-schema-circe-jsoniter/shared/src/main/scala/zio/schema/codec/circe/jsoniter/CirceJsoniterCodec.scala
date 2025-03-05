@@ -52,7 +52,7 @@ object CirceJsoniterCodec {
       }
   }
 
-  def jsonEncoder[A](schema: Schema[A])(implicit config: Config = Config.default): Encoder[A] =
+  def schemaEncoder[A](schema: Schema[A])(implicit config: Config = Config.default): Encoder[A] =
     Codecs.encodeSchema(schema, config)
 
   object CirceJsoniterEncoder {
@@ -66,15 +66,17 @@ object CirceJsoniterCodec {
       charSequenceToByteChunk(Codecs.encodeSchema(schema, cfg)(value).noSpaces)
   }
 
-  def jsonDecoder[A](schema: Schema[A]): Decoder[A] =
+  def schemaDecoder[A](schema: Schema[A]): Decoder[A] =
     Codecs.decodeSchema(schema)
 
   object CirceJsoniterDecoder {
 
-    final def decode[A](schema: Schema[A], json: String): Either[Error, A] =
-      parser.decode[A](json)(Codecs.decodeSchema(schema))
+    final def decode[A](schema: Schema[A], json: String): Either[Error, A] = {
+      implicit val decoder: Decoder[A] = Codecs.decodeSchema(schema)
+      parser.decode[A](json)
+    }
   }
 
-  def jsonCodec[A](schema: Schema[A]): Codec[A] =
-    Codec.from(jsonDecoder(schema), jsonEncoder(schema))
+  def schemaCodec[A](schema: Schema[A]): Codec[A] =
+    Codec.from(schemaDecoder(schema), schemaEncoder(schema))
 }

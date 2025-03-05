@@ -1,5 +1,6 @@
 package zio.schema.codec.circe.jsoniter
 
+import io.circe.Decoder
 import io.circe.parser.decode
 import zio.durationInt
 import zio.schema.Schema
@@ -8,7 +9,7 @@ import zio.test.Assertion.{equalTo, isRight}
 import zio.test.TestAspect.timeout
 import zio.test._
 
-object CirceCodecJVMSpec extends ZIOSpecDefault {
+object CirceJsoniterCodecJVMSpec extends ZIOSpecDefault {
 
   def spec: Spec[TestEnvironment, Any] =
     suite("JsonJsoniterCodec JVM Spec")(
@@ -31,12 +32,14 @@ object CirceCodecJVMSpec extends ZIOSpecDefault {
   )
 
   private def assertDecodesJson[A](schema: Schema[A], value: A, json: String) = {
-    val either = decode[A](json)(CirceJsoniterCodec.jsonDecoder(schema))
+    implicit val decoder: Decoder[A] = CirceJsoniterCodec.schemaDecoder(schema)
+    val either                       = decode[A](json)
     zio.test.assert(either)(isRight(equalTo(value)))
   }
 
   private def assertDecodesJsonFailure[A](schema: Schema[A], json: String) = {
-    val either = decode[A](json)(CirceJsoniterCodec.jsonDecoder(schema))
+    implicit val decoder: Decoder[A] = CirceJsoniterCodec.schemaDecoder(schema)
+    val either                       = decode[A](json)
     zio.test.assertTrue(either.isLeft)
   }
 }

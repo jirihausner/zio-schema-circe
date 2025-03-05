@@ -65,7 +65,6 @@ object BuildHelper {
       "40",
       "-Ywarn-numeric-widen",
       "-Ywarn-value-discard",
-      "-Wconf:msg=lambda-parens:s",
       "-Xsource:3.0",
     )
 
@@ -82,8 +81,6 @@ object BuildHelper {
           "-language:implicitConversions",
           "-Xignore-scala2-macros",
           "-Xkind-projector",
-          "-source:3.0-migration",
-          "-rewrite",
         )
       case Some((2, 13)) =>
         Seq(
@@ -182,7 +179,7 @@ object BuildHelper {
 
   def stdSettings(projectName: String) =
     Seq(
-      name                          := s"$projectName",
+      name                          := projectName,
       crossScalaVersions            := Seq(Scala213, Scala212, Scala3),
       ThisBuild / scalaVersion      := Scala213,
       scalacOptions ++= compilerOptions(scalaVersion.value, optimize = !isSnapshot.value),
