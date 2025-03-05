@@ -2,13 +2,14 @@ package zio.schema.codec.circe.jsoniter
 
 import io.circe.{Decoder, Encoder}
 import io.circe.parser.decode
-import zio.Console.*
-import zio.*
-import zio.schema.*
-import zio.schema.annotation.*
-import zio.test.Assertion.*
-import zio.test.TestAspect.*
-import zio.test.*
+import zio.Console._
+import zio._
+import zio.schema._
+import zio.schema.annotation._
+import zio.schema.codec.circe.VersionSpecificCirceCodecSpec._
+import zio.test.Assertion._
+import zio.test.TestAspect._
+import zio.test._
 
 object VersionSpecificCirceJsoniterCodecSpec extends ZIOSpecDefault {
 
@@ -67,53 +68,4 @@ object VersionSpecificCirceJsoniterCodecSpec extends ZIOSpecDefault {
       }
     )
   )
-
-  case class WithDefaultValue(orderId: Int, description: String = "desc")
-
-  object WithDefaultValue {
-    implicit lazy val schema: Schema[WithDefaultValue] = DeriveSchema.gen[WithDefaultValue]
-  }
-
-  enum ErrorGroup1:
-    case Err1
-    case Err2
-    case Err3
-
-  enum ErrorGroup2:
-    case Err21
-    case Err22
-    case Err23
-
-  case class Value(i: Int)
-  object Value:
-    given Schema[Value] = DeriveSchema.gen[Value]
-
-  case class Result(res: Either[ErrorGroup1 | ErrorGroup2, Value])
-  object Result:
-    given Schema[Result] = DeriveSchema.gen[Result]
-
-  case class Inner(i: Int) derives Schema
-
-  @discriminatorName("type")
-  sealed trait Base derives Schema:
-    def a: String
-
-  case class BaseA(a: String) extends Base derives Schema
-
-  case class BaseB(a: String, b: Inner) extends Base derives Schema
-
-  given Schema[Null] = Schema.option[Unit].transform[Null]({ _ => null }, { _ => None })
-
-  type UnionValue = Int | Boolean | String | Null
-
-  object UnionValue {
-    given Schema[UnionValue] = Schema.enumeration[UnionValue, CaseSet.Aux[UnionValue]](
-      TypeId.Structural,
-      CaseSet.caseOf[Int, UnionValue]("int")(_.asInstanceOf[Int])(_.asInstanceOf[UnionValue])(_.isInstanceOf[Int]) ++
-        CaseSet.caseOf[Boolean, UnionValue]("boolean")(_.asInstanceOf[Boolean])(_.asInstanceOf[UnionValue])(_.isInstanceOf[Boolean]) ++
-        CaseSet.caseOf[String, UnionValue]("string")(_.asInstanceOf[String])(_.asInstanceOf[UnionValue])(_.isInstanceOf[String]) ++
-        CaseSet.caseOf[Null, UnionValue]("null")(_.asInstanceOf[Null])(_.asInstanceOf[UnionValue])(_ == null),
-      Chunk(noDiscriminator())
-    )
-  }
 }
