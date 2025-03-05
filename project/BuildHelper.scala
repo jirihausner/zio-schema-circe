@@ -81,8 +81,6 @@ object BuildHelper {
           "-language:implicitConversions",
           "-Xignore-scala2-macros",
           "-Xkind-projector",
-          "-source:3.4-migration",
-          "-rewrite",
         )
       case Some((2, 13)) =>
         Seq(
@@ -108,6 +106,15 @@ object BuildHelper {
 
     stdOptions ++ extraOptions
   }
+
+  val dottySettings = Seq(
+    scalacOptions --= {
+      if (scalaVersion.value == Scala3)
+        Seq("-Xfatal-warnings")
+      else
+        Seq()
+    }
+  )
 
   def platformSpecificSources(platform: String, conf: String, baseDirectory: File)(versions: String*): Seq[File] =
     for {
