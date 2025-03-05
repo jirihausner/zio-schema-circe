@@ -81,6 +81,8 @@ object BuildHelper {
           "-language:implicitConversions",
           "-Xignore-scala2-macros",
           "-Xkind-projector",
+          "-source:3.4-migration",
+          "-rewrite",
         )
       case Some((2, 13)) =>
         Seq(
