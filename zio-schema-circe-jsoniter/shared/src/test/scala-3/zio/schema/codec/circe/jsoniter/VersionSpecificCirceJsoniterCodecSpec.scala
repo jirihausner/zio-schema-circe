@@ -9,7 +9,7 @@ import zio.schema.annotation._
 import zio.schema.codec.circe.VersionSpecificCirceCodecSpec._
 import zio.test.Assertion._
 import zio.test.TestAspect._
-import zio.test._
+import zio.test.{assert, assertTrue, Spec, TestEnvironment, ZIOSpecDefault}
 
 object VersionSpecificCirceJsoniterCodecSpec extends ZIOSpecDefault {
 

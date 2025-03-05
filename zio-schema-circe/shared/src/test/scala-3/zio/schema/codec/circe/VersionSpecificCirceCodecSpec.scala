@@ -2,13 +2,13 @@ package zio.schema.codec.circe
 
 import io.circe.{Decoder, Encoder}
 import io.circe.parser.decode
-import zio.Console.*
-import zio.*
-import zio.schema.*
-import zio.schema.annotation.*
-import zio.test.Assertion.*
-import zio.test.TestAspect.*
-import zio.test.*
+import zio.Console._
+import zio._
+import zio.schema._
+import zio.schema.annotation._
+import zio.test.Assertion._
+import zio.test.TestAspect._
+import zio.test.{assert, assertTrue, Spec, TestEnvironment, ZIOSpecDefault}
 
 object VersionSpecificCirceCodecSpec extends ZIOSpecDefault {
 
