@@ -107,15 +107,6 @@ object BuildHelper {
     stdOptions ++ extraOptions
   }
 
-  val dottySettings = Seq(
-    scalacOptions --= {
-      if (scalaVersion.value == Scala3)
-        Seq("-Xfatal-warnings")
-      else
-        Seq()
-    },
-  )
-
   def platformSpecificSources(platform: String, conf: String, baseDirectory: File)(versions: String*): Seq[File] =
     for {
       platform <- List("shared", platform)

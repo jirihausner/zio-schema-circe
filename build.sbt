@@ -65,7 +65,6 @@ lazy val zioSchemaCirce =
     .settings(stdSettings("zio-schema-circe"))
     .settings(buildInfoSettings("zio.schema.codec.circe"))
     .settings(mimaSettings(binCompatVersionToCompare, failOnProblem = true))
-    .settings(dottySettings)
     .settings(
       libraryDependencies ++= Seq(
         "io.circe" %%% "circe-core"            % Versions.circe,
@@ -106,7 +105,6 @@ lazy val zioSchemaCirceJsoniter =
     .settings(stdSettings("zio-schema-circe-jsoniter"))
     .settings(buildInfoSettings("zio.schema.codec.circe.jsoniter"))
     .settings(mimaSettings(binCompatVersionToCompare, failOnProblem = true))
-    .settings(dottySettings)
     .settings(
       libraryDependencies += "com.github.plokhotnyuk.jsoniter-scala" %%% "jsoniter-scala-circe" % Versions.jsoniter,
     )
