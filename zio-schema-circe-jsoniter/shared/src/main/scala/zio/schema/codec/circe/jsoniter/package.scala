@@ -11,8 +11,8 @@ import java.util.Base64
 
 package object jsoniter {
 
-  implicit val schemaJson: Schema[Json] = circe.schemaJson
-  Schema.dynamicValue.transform(toJson, circe.fromJson).annotate(directDynamicMapping())
+  implicit val schemaJson: Schema[Json] =
+    Schema.dynamicValue.transform(toJson, circe.fromJson).annotate(directDynamicMapping())
 
   implicit val schemaJsonObject: Schema[JsonObject] = circe.schemaJsonObject
 
