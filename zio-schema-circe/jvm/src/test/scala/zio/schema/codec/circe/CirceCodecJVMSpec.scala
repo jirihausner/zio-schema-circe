@@ -11,7 +11,7 @@ import zio.test._
 object CirceCodecJVMSpec extends ZIOSpecDefault {
 
   def spec: Spec[TestEnvironment, Any] =
-    suite("JsonCodec JVM Spec")(
+    suite("CirceCodec JVM Spec")(
       decoderSuite,
     ) @@ TestAspect.jvmOnly @@ timeout(180.seconds)
 

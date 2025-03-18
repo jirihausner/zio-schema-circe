@@ -24,7 +24,11 @@ object CirceCodecSpec extends ZIOSpecDefault with EncoderSpecs with DecoderSpecs
   override protected def BinaryCodec[A]: (Schema[A], Config) => codec.BinaryCodec[A] =
     (schema: Schema[A], config: CirceCodec.Config) => CirceCodec.schemaBasedBinaryCodec(config)(schema)
 
-  val circeASTSuite: Spec[Any, DecodeError] = suite("circe AST")(
+  def circeASTSuite(implicit
+    schemaJson: Schema[Json],
+    schemaJsonObject: Schema[JsonObject],
+    schemaJsonNumber: Schema[JsonNumber],
+  ): Spec[Any, DecodeError] = suite("circe AST")(
     suite("io.circe.Json")(
       test("encodes and decodes null") {
         assertEncodes(schemaJson, Json.Null, """null""") &&
