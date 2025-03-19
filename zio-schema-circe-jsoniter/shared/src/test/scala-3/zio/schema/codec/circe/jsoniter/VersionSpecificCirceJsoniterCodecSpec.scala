@@ -14,6 +14,6 @@ object VersionSpecificCirceJsoniterCodecSpec extends VersionSpecificCodecSpec {
 
   def spec: Spec[TestEnvironment, Any] =
     suite("VersionSpecificCirceJsoniterCodecSpec")(
-      customSuite
+      customSuite,
     ) @@ timeout(90.seconds)
 }
