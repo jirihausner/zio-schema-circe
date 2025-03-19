@@ -16,7 +16,7 @@ private[jsoniter] object Codecs extends zio.schema.codec.circe.internal.Codecs {
     case StandardType.LongType           => CirceCodecs.longC3C
     case StandardType.FloatType          => CirceCodecs.floatC3C
     case StandardType.DoubleType         => CirceCodecs.doubleC3C
-    case StandardType.BinaryType         => encodeChunk(Encoder.encodeByte)
+    case StandardType.BinaryType         => encodeChunk(CirceCodecs.byteC3C)
     case StandardType.CharType           => Encoder.encodeChar
     case StandardType.BigIntegerType     => CirceCodecs.bigIntC3C.contramap[java.math.BigInteger](new BigInt(_))
     case StandardType.BigDecimalType     => CirceCodecs.bigDecimalC3C.contramap[java.math.BigDecimal](new BigDecimal(_))
@@ -50,7 +50,7 @@ private[jsoniter] object Codecs extends zio.schema.codec.circe.internal.Codecs {
     case StandardType.LongType           => CirceCodecs.longC3C
     case StandardType.FloatType          => CirceCodecs.floatC3C
     case StandardType.DoubleType         => CirceCodecs.doubleC3C
-    case StandardType.BinaryType         => decodeChunk(Decoder.decodeByte)
+    case StandardType.BinaryType         => decodeChunk(CirceCodecs.byteC3C)
     case StandardType.CharType           => Decoder.decodeChar
     case StandardType.BigIntegerType     => CirceCodecs.bigIntC3C.map(_.underlying)
     case StandardType.BigDecimalType     => CirceCodecs.bigDecimalC3C.map(_.underlying)
