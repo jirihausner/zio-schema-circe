@@ -22,28 +22,33 @@ object CirceCodec {
     val default: Config = Config(ignoreEmptyCollections = false)
   }
 
-  implicit def circeBinaryCodec[A](implicit codec: Encoder[A] with Decoder[A]): BinaryCodec[A] = new BinaryCodec[A] {
+  implicit def circeBinaryCodec[A](implicit codec: Encoder[A] with Decoder[A]): BinaryCodec[A] =
+    circeBinaryCodec(codec, codec)
 
-    override def encode(value: A): Chunk[Byte] = Chunk.fromArray(codec(value).noSpaces.getBytes(StandardCharsets.UTF_8))
+  implicit def circeBinaryCodec[A](implicit encoder: Encoder[A], decoder: Decoder[A]): BinaryCodec[A] =
+    new BinaryCodec[A] {
 
-    override def streamEncoder: ZPipeline[Any, Nothing, A, Byte] =
-      ZPipeline.mapChunks[A, Chunk[Byte]](_.map(encode)).intersperse(Chunk.single('\n'.toByte)).flattenChunks
+      override def encode(value: A): Chunk[Byte] =
+        Chunk.fromArray(encoder(value).noSpaces.getBytes(StandardCharsets.UTF_8))
 
-    override def decode(whole: Chunk[Byte]): Either[DecodeError, A] =
-      parser
-        .decode[A](new String(whole.toArray, StandardCharsets.UTF_8))
-        .left
-        .map(failure => DecodeError.ReadError(Cause.fail(failure), failure.getMessage))
+      override def streamEncoder: ZPipeline[Any, Nothing, A, Byte] =
+        ZPipeline.mapChunks[A, Chunk[Byte]](_.map(encode)).intersperse(Chunk.single('\n'.toByte)).flattenChunks
 
-    override def streamDecoder: ZPipeline[Any, DecodeError, Byte, A] =
-      ZPipeline.fromChannel {
-        ZPipeline.utf8Decode.channel.mapError(cce => DecodeError.ReadError(Cause.fail(cce), cce.getMessage))
-      } >>> JsonSplitter.splitOnJsonBoundary >>> ZPipeline.mapZIO { (str: String) =>
-        ZIO
-          .fromEither(parser.decode[A](str))
-          .mapError(failure => DecodeError.ReadError(Cause.empty, failure.getMessage))
-      }
-  }
+      override def decode(whole: Chunk[Byte]): Either[DecodeError, A] =
+        parser
+          .decode[A](new String(whole.toArray, StandardCharsets.UTF_8))
+          .left
+          .map(failure => DecodeError.ReadError(Cause.fail(failure), failure.getMessage))
+
+      override def streamDecoder: ZPipeline[Any, DecodeError, Byte, A] =
+        ZPipeline.fromChannel {
+          ZPipeline.utf8Decode.channel.mapError(cce => DecodeError.ReadError(Cause.fail(cce), cce.getMessage))
+        } >>> JsonSplitter.splitOnJsonBoundary >>> ZPipeline.mapZIO { (str: String) =>
+          ZIO
+            .fromEither(parser.decode[A](str)(decoder))
+            .mapError(failure => DecodeError.ReadError(Cause.empty, failure.getMessage))
+        }
+    }
 
   def schemaBasedBinaryCodec[A](config: Config)(implicit schema: Schema[A]): BinaryCodec[A] = new BinaryCodec[A] {
 
