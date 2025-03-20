@@ -13,7 +13,7 @@ import zio.{Chunk, Console, ZIO}
 
 import scala.collection.immutable.ListMap
 
-private[circe] trait EncoderSpecs {
+private[circe] trait EncoderSpecs extends StringUtils {
 
   type Config
 

@@ -16,7 +16,7 @@ import zio.{Cause, Chunk, Console, ZIO}
 
 import scala.collection.immutable.ListMap
 
-private[circe] trait DecoderSpecs {
+private[circe] trait DecoderSpecs extends StringUtils {
 
   type Config
 
