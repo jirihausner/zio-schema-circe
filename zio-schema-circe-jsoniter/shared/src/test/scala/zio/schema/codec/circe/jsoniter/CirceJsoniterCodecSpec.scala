@@ -33,6 +33,24 @@ object CirceJsoniterCodecSpec extends ZIOSpecDefault with EncoderSpecs with Deco
    */
   override def stringify(str: String): String = writeToString(io.circe.Encoder.encodeString(str))(jsonC3c)
 
+  /**
+   * Workaround for jsoniter being rounded up on 6th digit on JS platform.
+   */
+  override protected def testFloat: Spec[Any, Nothing] = test("Float") {
+    import java.math.RoundingMode
+
+    check(Gen.float) { float =>
+      assertEncodesNumericToPrecision(
+        Schema.Primitive(StandardType.FloatType),
+        float,
+        bd => {
+          if (TestPlatform.isJS) bd.setScale(5, RoundingMode.HALF_UP) // less accurate on JS
+          else bd.setScale(7, RoundingMode.HALF_UP)
+        },
+      )
+    }
+  }
+
   def spec: Spec[TestEnvironment, Any] =
     suite("CirceJsoniterCodec specs")(
       encoderSuite,
