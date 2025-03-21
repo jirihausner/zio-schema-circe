@@ -1,5 +1,7 @@
 package zio.schema.codec.circe.jsoniter
 
+import com.github.plokhotnyuk.jsoniter_scala.circe.JsoniterScalaCodec.jsonC3c
+import com.github.plokhotnyuk.jsoniter_scala.core.{readFromArray, readFromString, writeToArray}
 import io.circe._
 import zio.schema.Schema
 import zio.schema.codec.circe.CirceCodec.Config
@@ -9,10 +11,31 @@ import zio.schema.codec.{BinaryCodec, DecodeError}
 import zio.stream.ZPipeline
 import zio.{Cause, Chunk, ZIO}
 
-import java.nio.CharBuffer
 import java.nio.charset.StandardCharsets
 
 object CirceJsoniterCodec {
+
+  implicit def circeJsoniterBinaryCodec[A](implicit codec: Encoder[A] with Decoder[A]): BinaryCodec[A] =
+    new BinaryCodec[A] {
+
+      override def encode(value: A): Chunk[Byte] = Chunk.fromArray(writeToArray(codec(value))(jsonC3c))
+
+      override def streamEncoder: ZPipeline[Any, Nothing, A, Byte] =
+        ZPipeline.mapChunks[A, Chunk[Byte]](_.map(encode)).intersperse(Chunk.single('\n'.toByte)).flattenChunks
+
+      override def decode(whole: Chunk[Byte]): Either[DecodeError, A] =
+        codec(readFromArray(whole.toArray)(jsonC3c).hcursor).left
+          .map(failure => DecodeError.ReadError(Cause.fail(failure), failure.getMessage))
+
+      override def streamDecoder: ZPipeline[Any, DecodeError, Byte, A] =
+        ZPipeline.fromChannel {
+          ZPipeline.utf8Decode.channel.mapError(cce => DecodeError.ReadError(Cause.fail(cce), cce.getMessage))
+        } >>> JsonSplitter.splitOnJsonBoundary >>> ZPipeline.mapZIO { (str: String) =>
+          ZIO
+            .fromEither(parser.decode[A](str))
+            .mapError(failure => DecodeError.ReadError(Cause.empty, failure.getMessage))
+        }
+    }
 
   def schemaBasedBinaryCodec[A](config: Config)(implicit schema: Schema[A]): BinaryCodec[A] = new BinaryCodec[A] {
 
@@ -57,13 +80,8 @@ object CirceJsoniterCodec {
 
   object CirceJsoniterEncoder {
 
-    private[circe] def charSequenceToByteChunk(chars: CharSequence): Chunk[Byte] = {
-      val bytes = StandardCharsets.UTF_8.newEncoder().encode(CharBuffer.wrap(chars))
-      Chunk.fromByteBuffer(bytes)
-    }
-
     final def encode[A](schema: Schema[A], value: A, cfg: Config): Chunk[Byte] =
-      charSequenceToByteChunk(Codecs.encodeSchema(schema, cfg)(value).noSpaces)
+      Chunk.fromArray(writeToArray(Codecs.encodeSchema(schema, cfg)(value))(jsonC3c))
   }
 
   def schemaDecoder[A](schema: Schema[A]): Decoder[A] =
@@ -73,7 +91,7 @@ object CirceJsoniterCodec {
 
     final def decode[A](schema: Schema[A], json: String): Either[Error, A] = {
       implicit val decoder: Decoder[A] = Codecs.decodeSchema(schema)
-      parser.decode[A](json)
+      decoder(readFromString(json)(jsonC3c).hcursor)
     }
   }
 
