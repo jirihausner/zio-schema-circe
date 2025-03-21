@@ -16,18 +16,15 @@ import java.nio.charset.StandardCharsets
 object CirceJsoniterCodec {
 
   implicit def circeJsoniterBinaryCodec[A](implicit codec: Encoder[A] with Decoder[A]): BinaryCodec[A] =
-    circeJsoniterBinaryCodec(codec, codec)
-
-  implicit def circeJsoniterBinaryCodec[A](implicit encoder: Encoder[A], decoder: Decoder[A]): BinaryCodec[A] =
     new BinaryCodec[A] {
 
-      override def encode(value: A): Chunk[Byte] = Chunk.fromArray(writeToArray(encoder(value))(jsonC3c))
+      override def encode(value: A): Chunk[Byte] = Chunk.fromArray(writeToArray(codec(value))(jsonC3c))
 
       override def streamEncoder: ZPipeline[Any, Nothing, A, Byte] =
         ZPipeline.mapChunks[A, Chunk[Byte]](_.map(encode)).intersperse(Chunk.single('\n'.toByte)).flattenChunks
 
       override def decode(whole: Chunk[Byte]): Either[DecodeError, A] =
-        decoder(readFromArray(whole.toArray)(jsonC3c).hcursor).left
+        codec(readFromArray(whole.toArray)(jsonC3c).hcursor).left
           .map(failure => DecodeError.ReadError(Cause.fail(failure), failure.getMessage))
 
       override def streamDecoder: ZPipeline[Any, DecodeError, Byte, A] =
