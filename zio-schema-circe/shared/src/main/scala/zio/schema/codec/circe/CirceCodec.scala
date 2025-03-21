@@ -45,7 +45,7 @@ object CirceCodec {
           ZPipeline.utf8Decode.channel.mapError(cce => DecodeError.ReadError(Cause.fail(cce), cce.getMessage))
         } >>> JsonSplitter.splitOnJsonBoundary >>> ZPipeline.mapZIO { (str: String) =>
           ZIO
-            .fromEither(parser.decode[A](str)(decoder))
+            .fromEither(parser.decode[A](str))
             .mapError(failure => DecodeError.ReadError(Cause.empty, failure.getMessage))
         }
     }
