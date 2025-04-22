@@ -1,5 +1,4 @@
 import com.typesafe.tools.mima.core._
-import com.typesafe.tools.mima.core.ProblemFilters._
 import com.typesafe.tools.mima.plugin.MimaKeys._
 import org.snakeyaml.engine.v2.api.{Load, LoadSettings}
 import sbt._
@@ -48,6 +47,7 @@ object BuildHelper {
       "-feature",
       "-unchecked",
       "-language:existentials",
+      "-language:implicitConversions",
     ) ++ {
       if (sys.env.contains("CI")) {
         Seq("-Xfatal-warnings")
@@ -78,7 +78,6 @@ object BuildHelper {
     val extraOptions = CrossVersion.partialVersion(scalaVersion) match {
       case Some((3, _))  =>
         Seq(
-          "-language:implicitConversions",
           "-Xignore-scala2-macros",
           "-Xkind-projector",
         )
@@ -225,6 +224,19 @@ object BuildHelper {
       mimaPreviousArtifacts         := previousStableVersion.value.map(organization.value %% name.value % _).toSet,
       mimaCheckDirection            := "backward",
       mimaFailOnProblem             := true,
+      mimaBinaryIssueFilters ++= Seq(
+        ProblemFilters.exclude[Problem]("zio.schema.codec.circe.internal.*"),
+        ProblemFilters.exclude[DirectMissingMethodProblem]("zio.schema.codec.circe.CirceCodec.schemaDecoder"),
+        ProblemFilters.exclude[DirectMissingMethodProblem](
+          "zio.schema.codec.circe.jsoniter.CirceJsoniterCodec.schemaEncoder",
+        ),
+        ProblemFilters.exclude[DirectMissingMethodProblem](
+          "zio.schema.codec.circe.jsoniter.CirceJsoniterCodec.schemaDecoder",
+        ),
+        ProblemFilters.exclude[DirectMissingMethodProblem](
+          "zio.schema.codec.circe.jsoniter.CirceJsoniterCodec.schemaCodec",
+        ),
+      ),
     )
 
   def mimaSettings(binCompatVersionToCompare: Option[String], failOnProblem: Boolean): Seq[Def.Setting[?]] =

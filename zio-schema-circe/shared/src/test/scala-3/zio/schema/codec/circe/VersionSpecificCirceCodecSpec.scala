@@ -12,6 +12,8 @@ import zio.test.{assert, assertTrue, Spec, TestEnvironment, ZIOSpecDefault}
 
 object VersionSpecificCirceCodecSpec extends VersionSpecificCodecSpec {
 
+  implicit val config: CirceCodec.Configuration = CirceCodec.Configuration.default
+
   override protected def schemaEncoder[A: Schema]: Encoder[A] = CirceCodec.schemaEncoder(Schema[A])
   override protected def schemaDecoder[A: Schema]: Decoder[A] = CirceCodec.schemaDecoder(Schema[A])
 

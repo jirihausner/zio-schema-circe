@@ -2,7 +2,7 @@ import BuildHelper._
 import com.typesafe.tools.mima.plugin.MimaKeys.mimaPreviousArtifacts
 import xerial.sbt.Sonatype.sonatypeCentralHost
 
-lazy val binCompatVersionToCompare = None
+lazy val binCompatVersionToCompare = Some("0.3.1")
 
 inThisBuild(
   List(

@@ -578,6 +578,7 @@ private[circe] trait EncoderSpecs {
               request.nextPage
                 .map(x => s""","nextPage":${stringify(x)}}""")
                 .getOrElse("""}"""),
+            IgnoreEmptyCollectionsConfig,
           )
         }
       },
@@ -600,6 +601,7 @@ private[circe] trait EncoderSpecs {
           WithOptionFields.schema,
           WithOptionFields(Some("s"), None),
           """{"a":"s"}""",
+          IgnoreEmptyCollectionsConfig,
         )
       },
       test("case class with backticked field name") {
@@ -665,6 +667,7 @@ private[circe] trait EncoderSpecs {
           Subscription.schema,
           Subscription.Unlimited(None),
           """{"type":"unlimited"}""",
+          IgnoreEmptyCollectionsConfig,
         )
       },
       suite("with no discriminator")(

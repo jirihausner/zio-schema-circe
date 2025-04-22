@@ -141,7 +141,7 @@ private[circe] trait Codecs {
 
   private case class EncoderKey[A](
     schema: Schema[A],
-    config: CirceCodec.Config,
+    config: CirceCodec.Configuration,
     discriminatorTuple: DiscriminatorTuple,
   ) {
     override val hashCode: Int = System.identityHashCode(schema) ^ config.hashCode ^ discriminatorTuple.hashCode
@@ -151,10 +151,10 @@ private[circe] trait Codecs {
     }
   }
 
-  private case class DecoderKey[A](schema: Schema[A], discriminator: Option[String]) {
-    override val hashCode: Int             = System.identityHashCode(schema) ^ discriminator.hashCode
+  private case class DecoderKey[A](schema: Schema[A], config: CirceCodec.Configuration, discriminator: Option[String]) {
+    override val hashCode: Int             = System.identityHashCode(schema) ^ config.hashCode ^ discriminator.hashCode
     override def equals(obj: Any): Boolean = obj match {
-      case x: DecoderKey[_] => (x.schema eq schema) && x.discriminator == discriminator
+      case x: DecoderKey[_] => (x.schema eq schema) && x.config == config && x.discriminator == discriminator
       case _                => false
     }
   }
@@ -164,7 +164,7 @@ private[circe] trait Codecs {
 
   def encodeSchema[A](
     schema: Schema[A],
-    config: CirceCodec.Config,
+    config: CirceCodec.Configuration,
     discriminatorTuple: DiscriminatorTuple = None,
   ): Encoder[A] = {
     val key                 = EncoderKey(schema, config, discriminatorTuple)
@@ -176,11 +176,15 @@ private[circe] trait Codecs {
     encoder
   }
 
-  def decodeSchema[A](schema: Schema[A], discriminator: Option[String] = None): Decoder[A] = {
-    val key     = DecoderKey(schema, discriminator)
+  def decodeSchema[A](
+    schema: Schema[A],
+    config: CirceCodec.Configuration,
+    discriminator: Option[String] = None,
+  ): Decoder[A] = {
+    val key     = DecoderKey(schema, config, discriminator)
     var decoder = decoders.get(key).asInstanceOf[Decoder[A]]
     if (decoder eq null) {
-      decoder = decodeSchemaSlow(schema, discriminator)
+      decoder = decodeSchemaSlow(schema, config, discriminator)
       decoders.put(key, decoder)
     }
     decoder
@@ -188,7 +192,7 @@ private[circe] trait Codecs {
 
   def encodeSchemaSlow[A](
     schema: Schema[A],
-    config: CirceCodec.Config,
+    config: CirceCodec.Configuration,
     discriminatorTuple: DiscriminatorTuple = None,
   ): Encoder[A] = schema match {
     case Schema.Primitive(standardType, _)   => encodePrimitive(standardType)
@@ -214,64 +218,68 @@ private[circe] trait Codecs {
       throw new Exception(s"A captured schema is null, most likely due to wrong field initialization order")
   }
 
-  def decodeSchemaSlow[A](schema: Schema[A], discriminator: Option[String] = None): Decoder[A] = schema match {
-    case Schema.Primitive(standardType, _)              => decodePrimitive(standardType)
-    case Schema.Optional(codec, _)                      => Decoder.decodeOption(decodeSchema(codec))
-    case Schema.Tuple2(left, right, _)                  => Decoder.decodeTuple2(decodeSchema(left), decodeSchema(right))
-    case Schema.Sequence(codec, f, _, _, _)             => decodeChunk(decodeSchema(codec)).map(f)
-    case s @ Schema.NonEmptySequence(codec, _, _, _, _) => decodeChunk(decodeSchema(codec)).map(s.fromChunk)
-    case Schema.Map(ks, vs, _)                          => decodeMap(ks, vs)
+  def decodeSchemaSlow[A](
+    schema: Schema[A],
+    config: CirceCodec.Configuration,
+    discriminator: Option[String] = None,
+  ): Decoder[A] = schema match {
+    case Schema.Primitive(standardType, _) => decodePrimitive(standardType)
+    case Schema.Optional(codec, _)         => Decoder.decodeOption(decodeSchema(codec, config))
+    case Schema.Tuple2(left, right, _) => Decoder.decodeTuple2(decodeSchema(left, config), decodeSchema(right, config))
+    case Schema.Sequence(codec, f, _, _, _)             => decodeChunk(decodeSchema(codec, config)).map(f)
+    case s @ Schema.NonEmptySequence(codec, _, _, _, _) => decodeChunk(decodeSchema(codec, config)).map(s.fromChunk)
+    case Schema.Map(ks, vs, _)                          => decodeMap(ks, vs, config)
     case Schema.NonEmptyMap(ks, vs, _)                  =>
-      decodeMap(ks, vs).emap(m => NonEmptyMap.fromMapOption(m).toRight("NonEmptyMap expected"))
-    case Schema.Set(s, _)                               => Decoder.decodeSet(decodeSchema(s))
+      decodeMap(ks, vs, config).emap(m => NonEmptyMap.fromMapOption(m).toRight("NonEmptyMap expected"))
+    case Schema.Set(s, _)                               => Decoder.decodeSet(decodeSchema(s, config))
     case Schema.Transform(c, f, _, a, _)                =>
-      decodeSchema(a.foldLeft(c)((s, a) => s.annotate(a)), discriminator).emap(f)
+      decodeSchema(a.foldLeft(c)((s, a) => s.annotate(a)), config, discriminator).emap(f)
     case Schema.Fail(message, _)                        => decodeFail(message)
     case Schema.Either(left, right, _)                  =>
-      Decoder.decodeEither("Left", "Right")(decodeSchema(left), decodeSchema(right))
-    case s @ Schema.Fallback(_, _, _, _)                => decodeFallback(s)
-    case s: Schema.Lazy[_]                              => decodeSuspend(decodeSchema(s.schema, discriminator))
-    case s: Schema.GenericRecord                        => decodeRecord(s, discriminator)
+      Decoder.decodeEither("Left", "Right")(decodeSchema(left, config), decodeSchema(right, config))
+    case s @ Schema.Fallback(_, _, _, _)                => decodeFallback(s, config)
+    case s: Schema.Lazy[_]                              => decodeSuspend(decodeSchema(s.schema, config, discriminator))
+    case s: Schema.GenericRecord                        => decodeRecord(s, config, discriminator)
     case s @ Schema.CaseClass0(_, _, _)                 => decodeCaseClass0(s, discriminator)
-    case s @ Schema.CaseClass1(_, _, _, _)              => decodeCaseClass1(s, discriminator)
-    case s @ Schema.CaseClass2(_, _, _, _, _)           => decodeCaseClass2(s, discriminator)
-    case s @ Schema.CaseClass3(_, _, _, _, _, _)        => decodeCaseClass3(s, discriminator)
-    case s @ Schema.CaseClass4(_, _, _, _, _, _, _)     => decodeCaseClass4(s, discriminator)
-    case s @ Schema.CaseClass5(_, _, _, _, _, _, _, _)  => decodeCaseClass5(s, discriminator)
-    case s @ Schema.CaseClass6(_, _, _, _, _, _, _, _, _)                       => decodeCaseClass6(s, discriminator)
-    case s @ Schema.CaseClass7(_, _, _, _, _, _, _, _, _, _)                    => decodeCaseClass7(s, discriminator)
-    case s @ Schema.CaseClass8(_, _, _, _, _, _, _, _, _, _, _)                 => decodeCaseClass8(s, discriminator)
-    case s @ Schema.CaseClass9(_, _, _, _, _, _, _, _, _, _, _, _)              => decodeCaseClass9(s, discriminator)
-    case s @ Schema.CaseClass10(_, _, _, _, _, _, _, _, _, _, _, _, _)          => decodeCaseClass10(s, discriminator)
-    case s @ Schema.CaseClass11(_, _, _, _, _, _, _, _, _, _, _, _, _, _)       =>
-      decodeCaseClass11(s, discriminator)
-    case s @ Schema.CaseClass12(_, _, _, _, _, _, _, _, _, _, _, _, _, _, _)    =>
-      decodeCaseClass12(s, discriminator)
-    case s @ Schema.CaseClass13(_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _) =>
-      decodeCaseClass13(s, discriminator)
+    case s @ Schema.CaseClass1(_, _, _, _)              => decodeCaseClass1(s, config, discriminator)
+    case s @ Schema.CaseClass2(_, _, _, _, _)           => decodeCaseClass2(s, config, discriminator)
+    case s @ Schema.CaseClass3(_, _, _, _, _, _)        => decodeCaseClass3(s, config, discriminator)
+    case s @ Schema.CaseClass4(_, _, _, _, _, _, _)     => decodeCaseClass4(s, config, discriminator)
+    case s @ Schema.CaseClass5(_, _, _, _, _, _, _, _)  => decodeCaseClass5(s, config, discriminator)
+    case s @ Schema.CaseClass6(_, _, _, _, _, _, _, _, _)                 => decodeCaseClass6(s, config, discriminator)
+    case s @ Schema.CaseClass7(_, _, _, _, _, _, _, _, _, _)              => decodeCaseClass7(s, config, discriminator)
+    case s @ Schema.CaseClass8(_, _, _, _, _, _, _, _, _, _, _)           => decodeCaseClass8(s, config, discriminator)
+    case s @ Schema.CaseClass9(_, _, _, _, _, _, _, _, _, _, _, _)        => decodeCaseClass9(s, config, discriminator)
+    case s @ Schema.CaseClass10(_, _, _, _, _, _, _, _, _, _, _, _, _)    => decodeCaseClass10(s, config, discriminator)
+    case s @ Schema.CaseClass11(_, _, _, _, _, _, _, _, _, _, _, _, _, _) =>
+      decodeCaseClass11(s, config, discriminator)
+    case s @ Schema.CaseClass12(_, _, _, _, _, _, _, _, _, _, _, _, _, _, _)                      =>
+      decodeCaseClass12(s, config, discriminator)
+    case s @ Schema.CaseClass13(_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _)                   =>
+      decodeCaseClass13(s, config, discriminator)
     case s @ Schema
           .CaseClass14(_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _) =>
-      decodeCaseClass14(s, discriminator)
+      decodeCaseClass14(s, config, discriminator)
     case s @ Schema
           .CaseClass15(_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _) =>
-      decodeCaseClass15(s, discriminator)
-    case s @ Schema.CaseClass16(_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _) =>
-      decodeCaseClass16(s, discriminator)
+      decodeCaseClass15(s, config, discriminator)
+    case s @ Schema.CaseClass16(_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _)          =>
+      decodeCaseClass16(s, config, discriminator)
     case s @ Schema.CaseClass17(_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _)       =>
-      decodeCaseClass17(s, discriminator)
+      decodeCaseClass17(s, config, discriminator)
     case s @ Schema.CaseClass18(_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _)    =>
-      decodeCaseClass18(s, discriminator)
+      decodeCaseClass18(s, config, discriminator)
     case s @ Schema.CaseClass19(_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _) =>
-      decodeCaseClass19(s, discriminator)
+      decodeCaseClass19(s, config, discriminator)
     case s @ Schema.CaseClass20(_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _) =>
-      decodeCaseClass20(s, discriminator)
+      decodeCaseClass20(s, config, discriminator)
     case s @ Schema.CaseClass21(_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _) =>
-      decodeCaseClass21(s, discriminator)
+      decodeCaseClass21(s, config, discriminator)
     case s @ Schema.CaseClass22(_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _) =>
-      decodeCaseClass22(s, discriminator)
-    case s: Schema.Enum[A]                                                                        => decodeEnum(s)
-    case s: Schema.Dynamic                                                                        => decodeDynamic(s)
-    case _ => throw new Exception(s"Missing a handler for decoding of schema ${schema.toString()}.")
+      decodeCaseClass22(s, config, discriminator)
+    case s: Schema.Enum[A] => decodeEnum(s, config)
+    case s: Schema.Dynamic => decodeDynamic(s, config)
+    case _                 => throw new Exception(s"Missing a handler for decoding of schema ${schema.toString()}.")
   }
 
   def encodeField[B](schema: Schema[B]): Option[KeyEncoder[B]] = schema match {
@@ -311,7 +319,7 @@ private[circe] trait Codecs {
   def encodeMap[K, V](
     ks: Schema[K],
     vs: Schema[V],
-    config: CirceCodec.Config,
+    config: CirceCodec.Configuration,
   ): Encoder[Map[K, V]] = encodeField(ks) match {
     case Some(keyEncoder) => Encoder.encodeMap(keyEncoder, encodeSchema(vs, config))
     case None             =>
@@ -319,16 +327,20 @@ private[circe] trait Codecs {
         .contramap(Chunk.fromIterable)
   }
 
-  def decodeMap[K, V](ks: Schema[K], vs: Schema[V]): Decoder[Map[K, V]] = decodeField(ks) match {
-    case Some(keyDecoder) => Decoder.decodeMap(keyDecoder, decodeSchema(vs))
+  def decodeMap[K, V](
+    ks: Schema[K],
+    vs: Schema[V],
+    config: CirceCodec.Configuration,
+  ): Decoder[Map[K, V]] = decodeField(ks) match {
+    case Some(keyDecoder) => Decoder.decodeMap(keyDecoder, decodeSchema(vs, config))
     case None             =>
-      decodeChunk(Decoder.decodeTuple2(decodeSchema(ks), decodeSchema(vs)))
+      decodeChunk(Decoder.decodeTuple2(decodeSchema(ks, config), decodeSchema(vs, config)))
         .map(_.toMap)
   }
 
   private def isEmptyJsonArray(json: Json): Boolean = json.asArray.map(_.isEmpty).getOrElse(false)
 
-  def encodeDynamic(schema: Schema.Dynamic, config: CirceCodec.Config): Encoder[DynamicValue] = {
+  def encodeDynamic(schema: Schema.Dynamic, config: CirceCodec.Configuration): Encoder[DynamicValue] = {
     if (schema.annotations.exists(_.isInstanceOf[directDynamicMapping])) {
       new Encoder[DynamicValue] { encoder =>
         override def apply(a: DynamicValue): Json = a match {
@@ -336,8 +348,8 @@ private[circe] trait Codecs {
             val fields = values.map { case (k, v) =>
               val json = encoder(v)
               if (
-                (!config.ignoreEmptyCollections || !isEmptyJsonArray(json)) &&
-                (!config.ignoreNullValues || !json.isNull)
+                (config.explicitEmptyCollections.encoding || !isEmptyJsonArray(json)) &&
+                (config.explicitNullValues.encoding || !json.isNull)
               ) Some(k -> json)
               else None
             }
@@ -348,8 +360,8 @@ private[circe] trait Codecs {
             val maybeValues = values.map { case v =>
               val json = encoder(v)
               if (
-                (!config.ignoreEmptyCollections || !isEmptyJsonArray(json)) &&
-                (!config.ignoreNullValues || !json.isNull)
+                (config.explicitEmptyCollections.encoding || !isEmptyJsonArray(json)) &&
+                (config.explicitNullValues.encoding || !json.isNull)
               ) Some(json)
               else None
             }
@@ -360,8 +372,8 @@ private[circe] trait Codecs {
             val maybeValues = Chunk.fromIterable(values).map { case v =>
               val json = encoder(v)
               if (
-                (!config.ignoreEmptyCollections || !isEmptyJsonArray(json)) &&
-                (!config.ignoreNullValues || !json.isNull)
+                (config.explicitEmptyCollections.encoding || !isEmptyJsonArray(json)) &&
+                (config.explicitNullValues.encoding || !json.isNull)
               ) Some(json)
               else None
             }
@@ -387,20 +399,20 @@ private[circe] trait Codecs {
     } else encodeSchema(DynamicValue.schema, config)
   }
 
-  def decodeDynamic(schema: Schema.Dynamic): Decoder[DynamicValue] = {
+  def decodeDynamic(schema: Schema.Dynamic, config: CirceCodec.Configuration): Decoder[DynamicValue] = {
     val directMapping = schema.annotations.exists {
       case directDynamicMapping() => true
       case _                      => false
     }
 
     if (directMapping) Decoder.decodeJson.map(zio.schema.codec.circe.fromJson)
-    else decodeSchema(DynamicValue.schema)
+    else decodeSchema(DynamicValue.schema, config)
   }
 
   def encodeTransform[A, B](
     schema: Schema[A],
     g: B => Either[String, A],
-    config: CirceCodec.Config,
+    config: CirceCodec.Configuration,
     discriminatorTuple: DiscriminatorTuple,
   ): Encoder[B] = new Encoder[B] {
     override def apply(b: B): Json = g(b) match {
@@ -409,7 +421,7 @@ private[circe] trait Codecs {
     }
   }
 
-  def encodeEnum[Z](schema: Schema.Enum[Z], config: CirceCodec.Config): Encoder[Z] = {
+  def encodeEnum[Z](schema: Schema.Enum[Z], config: CirceCodec.Configuration): Encoder[Z] = {
     // if all cases are CaseClass0, encode as a String
     if (schema.annotations.exists(_.isInstanceOf[simpleEnum])) {
       Encoder.encodeString.contramap {
@@ -450,7 +462,7 @@ private[circe] trait Codecs {
     }
   }
 
-  def decodeEnum[Z](parentSchema: Schema.Enum[Z]): Decoder[Z] = {
+  def decodeEnum[Z](parentSchema: Schema.Enum[Z], config: CirceCodec.Configuration): Decoder[Z] = {
     val caseNameAliases = new mutable.HashMap[String, Schema.Case[Z, Any]]
     parentSchema.cases.foreach { case_ =>
       val schema = case_.asInstanceOf[Schema.Case[Z, Any]]
@@ -477,7 +489,7 @@ private[circe] trait Codecs {
     } else if (parentSchema.annotations.exists(_.isInstanceOf[noDiscriminator])) {
       new Decoder[Z] {
 
-        val decoders = parentSchema.cases.toArray.map(c => decodeSchema(c.schema))
+        val decoders = parentSchema.cases.toArray.map(c => decodeSchema(c.schema, config))
 
         override def apply(c: HCursor): Decoder.Result[Z] = {
           val it = decoders.iterator
@@ -499,7 +511,7 @@ private[circe] trait Codecs {
 
             val cases = new util.HashMap[String, Decoder[Any]](caseNameAliases.size << 1)
             caseNameAliases.foreach { case (name, case_) =>
-              cases.put(name, decodeSchema(case_.schema, discriminator))
+              cases.put(name, decodeSchema(case_.schema, config, discriminator))
             }
 
             override def apply(c: HCursor): Decoder.Result[Z] = {
@@ -519,7 +531,7 @@ private[circe] trait Codecs {
 
             val cases = new util.HashMap[String, Decoder[Any]](caseNameAliases.size << 1)
             caseNameAliases.foreach { case (name, case_) =>
-              cases.put(name, decodeSchema(case_.schema, discriminator))
+              cases.put(name, decodeSchema(case_.schema, config, discriminator))
             }
 
             override def apply(c: HCursor): Decoder.Result[Z] = {
@@ -551,41 +563,42 @@ private[circe] trait Codecs {
     }
   }
 
-  def decodeFallback[A, B](schema: Schema.Fallback[A, B]): Decoder[Fallback[A, B]] = new Decoder[Fallback[A, B]] {
+  def decodeFallback[A, B](schema: Schema.Fallback[A, B], config: CirceCodec.Configuration): Decoder[Fallback[A, B]] =
+    new Decoder[Fallback[A, B]] {
 
-    val leftDecoder  = decodeSchema(schema.left)
-    val rightDecoder = decodeSchema(schema.right)
+      val leftDecoder  = decodeSchema(schema.left, config)
+      val rightDecoder = decodeSchema(schema.right, config)
 
-    override def apply(c: HCursor): Decoder.Result[Fallback[A, B]] = {
-      if (c.value.isArray) {
-        c.values.toList.flatten match {
-          case Nil                  => Left(DecodingFailure("Empty array on fallback", c.history))
-          case left :: right :: Nil =>
-            left.as(leftDecoder) match {
-              case Left(_)      => right.as(rightDecoder).map(Fallback.Right(_))
-              case Right(first) =>
-                if (!schema.fullDecode) Right(Fallback.Left(first))
-                else
-                  right.as(rightDecoder) match {
-                    case Left(_)       => Right(Fallback.Left(first))
-                    case Right(second) => Right(Fallback.Both(first, second))
-                  }
+      override def apply(c: HCursor): Decoder.Result[Fallback[A, B]] = {
+        if (c.value.isArray) {
+          c.values.toList.flatten match {
+            case Nil                  => Left(DecodingFailure("Empty array on fallback", c.history))
+            case left :: right :: Nil =>
+              left.as(leftDecoder) match {
+                case Left(_)      => right.as(rightDecoder).map(Fallback.Right(_))
+                case Right(first) =>
+                  if (!schema.fullDecode) Right(Fallback.Left(first))
+                  else
+                    right.as(rightDecoder) match {
+                      case Left(_)       => Right(Fallback.Left(first))
+                      case Right(second) => Right(Fallback.Both(first, second))
+                    }
+              }
+            case _                    => Left(DecodingFailure("Too many items on fallback", c.history))
+          }
+        } else {
+          leftDecoder(c).map(Fallback.Left(_)).left.flatMap { _ =>
+            rightDecoder(c).map(Fallback.Right(_)).left.flatMap { _ =>
+              decodeFail("Fallback decoder was unable to decode both left and right sides")(c)
             }
-          case _                    => Left(DecodingFailure("Too many items on fallback", c.history))
-        }
-      } else {
-        leftDecoder(c).map(Fallback.Left(_)).left.flatMap { _ =>
-          rightDecoder(c).map(Fallback.Right(_)).left.flatMap { _ =>
-            decodeFail("Fallback decoder was unable to decode both left and right sides")(c)
           }
         }
       }
     }
-  }
 
   private def encodeRecord[Z](
     schema: Schema.GenericRecord,
-    config: CirceCodec.Config,
+    config: CirceCodec.Configuration,
     discriminatorTuple: DiscriminatorTuple,
   ): Encoder[ListMap[String, _]] = {
 
@@ -630,8 +643,8 @@ private[circe] trait Codecs {
     }
   }
 
-  private def isEmptyOptionalValue(schema: Schema.Field[_, _], value: Any, config: CirceCodec.Config) = {
-    (config.ignoreEmptyCollections || schema.optional) && (value match {
+  private def isEmptyOptionalValue(schema: Schema.Field[_, _], value: Any, config: CirceCodec.Configuration) = {
+    (!config.explicitEmptyCollections.encoding || schema.optional) && (value match {
       case None            => true
       case it: Iterable[_] => it.isEmpty
       case _               => false
@@ -640,16 +653,19 @@ private[circe] trait Codecs {
 
   def decodeRecord[Z](
     schema: Schema.GenericRecord,
+    config: CirceCodec.Configuration,
     discriminator: Option[String],
   ): Decoder[ListMap[String, Any]] = new Decoder[ListMap[String, Any]] {
 
-    val fields                 = schema.fields.toArray
-    val fieldWithDecoders      = new util.HashMap[String, (String, Decoder[Any])](schema.fields.size << 1)
+    val fields                   = schema.fields.toArray
+    val fieldWithDecoders        = new util.HashMap[String, (String, Decoder[Any])](schema.fields.size << 1)
     schema.fields.foreach { field =>
-      val decoder = decodeSchema(field.schema).asInstanceOf[Decoder[Any]]
+      val decoder = decodeSchema(field.schema, config).asInstanceOf[Decoder[Any]]
       field.nameAndAliases.foreach(fieldWithDecoders.put(_, (field.fieldName, decoder)))
     }
-    val rejectAdditionalFields = schema.annotations.exists(_.isInstanceOf[rejectExtraFields])
+    val explicitEmptyCollections = config.explicitEmptyCollections.decoding
+    val explicitNulls            = config.explicitNullValues.decoding
+    val rejectAdditionalFields   = schema.annotations.exists(_.isInstanceOf[rejectExtraFields])
 
     override def apply(c: HCursor): Decoder.Result[ListMap[String, Any]] = {
       val map  = new util.HashMap[String, Any](fields.length << 1)
@@ -689,9 +705,9 @@ private[circe] trait Codecs {
                     case _                 =>
                   }
                   schema match {
-                    case collection: Schema.Collection[_, _] => collection.empty
-                    case _: Schema.Optional[_]               => None
-                    case _                                   =>
+                    case collection: Schema.Collection[_, _] if !explicitEmptyCollections => collection.empty
+                    case _: Schema.Optional[_] if !explicitNulls                          => None
+                    case _                                                                =>
                       throw DecodingFailure(s"Missing field: $name", c.history)
                   }
                 }
@@ -716,7 +732,7 @@ private[circe] trait Codecs {
   }
 
   // scalafmt: { maxColumn = 400, optIn.configStyleArguments = false }
-  def encodeCaseClass[A](schema: Schema.Record[A], config: CirceCodec.Config, discriminatorTuple: DiscriminatorTuple): Encoder[A] = new Encoder[A] {
+  def encodeCaseClass[A](schema: Schema.Record[A], config: CirceCodec.Configuration, discriminatorTuple: DiscriminatorTuple): Encoder[A] = new Encoder[A] {
 
     val nonTransientFields = schema.nonTransientFields.map(_.asInstanceOf[Schema.Field[A, Any]]).toArray
     val fieldEncoders      = nonTransientFields.map(s => encodeSchema(s.schema, config))
@@ -735,7 +751,7 @@ private[circe] trait Codecs {
         val encoder = fieldEncoders(i)
         val value   = schema.get(a)
         val json    = encoder(value)
-        if (!isEmptyOptionalValue(schema, value, config) && (!json.isNull || !config.ignoreNullValues))
+        if (!isEmptyOptionalValue(schema, value, config) && (!json.isNull || config.explicitNullValues.encoding))
           builder += KeyEncoder.encodeKeyString(schema.fieldName) -> json
         i += 1
       }
@@ -777,86 +793,86 @@ private[circe] trait Codecs {
     }
   }
 
-  def decodeCaseClass1[A, Z](schema: Schema.CaseClass1[A, Z], discriminator: Option[String]): Decoder[Z] = {
-    decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
+  def decodeCaseClass1[A, Z](schema: Schema.CaseClass1[A, Z], config: CirceCodec.Configuration, discriminator: Option[String]): Decoder[Z] = {
+    decodeFields(schema, config, discriminator).map { (buffer: Array[Any]) =>
       schema.defaultConstruct(buffer(0).asInstanceOf[A])
     }
   }
 
-  def decodeCaseClass2[A1, A2, Z](schema: Schema.CaseClass2[A1, A2, Z], discriminator: Option[String]): Decoder[Z] = {
-    decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
+  def decodeCaseClass2[A1, A2, Z](schema: Schema.CaseClass2[A1, A2, Z], config: CirceCodec.Configuration, discriminator: Option[String]): Decoder[Z] = {
+    decodeFields(schema, config, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(buffer(0).asInstanceOf[A1], buffer(1).asInstanceOf[A2])
     }
   }
 
-  def decodeCaseClass3[A1, A2, A3, Z](schema: Schema.CaseClass3[A1, A2, A3, Z], discriminator: Option[String]): Decoder[Z] = {
-    decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
+  def decodeCaseClass3[A1, A2, A3, Z](schema: Schema.CaseClass3[A1, A2, A3, Z], config: CirceCodec.Configuration, discriminator: Option[String]): Decoder[Z] = {
+    decodeFields(schema, config, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(buffer(0).asInstanceOf[A1], buffer(1).asInstanceOf[A2], buffer(2).asInstanceOf[A3])
     }
   }
 
-  def decodeCaseClass4[A1, A2, A3, A4, Z](schema: Schema.CaseClass4[A1, A2, A3, A4, Z], discriminator: Option[String]): Decoder[Z] = {
-    decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
+  def decodeCaseClass4[A1, A2, A3, A4, Z](schema: Schema.CaseClass4[A1, A2, A3, A4, Z], config: CirceCodec.Configuration, discriminator: Option[String]): Decoder[Z] = {
+    decodeFields(schema, config, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(buffer(0).asInstanceOf[A1], buffer(1).asInstanceOf[A2], buffer(2).asInstanceOf[A3], buffer(3).asInstanceOf[A4])
     }
   }
 
-  def decodeCaseClass5[A1, A2, A3, A4, A5, Z](schema: Schema.CaseClass5[A1, A2, A3, A4, A5, Z], discriminator: Option[String]): Decoder[Z] = {
-    decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
+  def decodeCaseClass5[A1, A2, A3, A4, A5, Z](schema: Schema.CaseClass5[A1, A2, A3, A4, A5, Z], config: CirceCodec.Configuration, discriminator: Option[String]): Decoder[Z] = {
+    decodeFields(schema, config, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(buffer(0).asInstanceOf[A1], buffer(1).asInstanceOf[A2], buffer(2).asInstanceOf[A3], buffer(3).asInstanceOf[A4], buffer(4).asInstanceOf[A5])
     }
   }
 
-  def decodeCaseClass6[A1, A2, A3, A4, A5, A6, Z](schema: Schema.CaseClass6[A1, A2, A3, A4, A5, A6, Z], discriminator: Option[String]): Decoder[Z] = {
-    decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
+  def decodeCaseClass6[A1, A2, A3, A4, A5, A6, Z](schema: Schema.CaseClass6[A1, A2, A3, A4, A5, A6, Z], config: CirceCodec.Configuration, discriminator: Option[String]): Decoder[Z] = {
+    decodeFields(schema, config, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(buffer(0).asInstanceOf[A1], buffer(1).asInstanceOf[A2], buffer(2).asInstanceOf[A3], buffer(3).asInstanceOf[A4], buffer(4).asInstanceOf[A5], buffer(5).asInstanceOf[A6])
     }
   }
 
-  def decodeCaseClass7[A1, A2, A3, A4, A5, A6, A7, Z](schema: Schema.CaseClass7[A1, A2, A3, A4, A5, A6, A7, Z], discriminator: Option[String]): Decoder[Z] = {
-    decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
+  def decodeCaseClass7[A1, A2, A3, A4, A5, A6, A7, Z](schema: Schema.CaseClass7[A1, A2, A3, A4, A5, A6, A7, Z], config: CirceCodec.Configuration, discriminator: Option[String]): Decoder[Z] = {
+    decodeFields(schema, config, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(buffer(0).asInstanceOf[A1], buffer(1).asInstanceOf[A2], buffer(2).asInstanceOf[A3], buffer(3).asInstanceOf[A4], buffer(4).asInstanceOf[A5], buffer(5).asInstanceOf[A6], buffer(6).asInstanceOf[A7])
     }
   }
 
-  def decodeCaseClass8[A1, A2, A3, A4, A5, A6, A7, A8, Z](schema: Schema.CaseClass8[A1, A2, A3, A4, A5, A6, A7, A8, Z], discriminator: Option[String]): Decoder[Z] = {
-    decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
+  def decodeCaseClass8[A1, A2, A3, A4, A5, A6, A7, A8, Z](schema: Schema.CaseClass8[A1, A2, A3, A4, A5, A6, A7, A8, Z], config: CirceCodec.Configuration, discriminator: Option[String]): Decoder[Z] = {
+    decodeFields(schema, config, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(buffer(0).asInstanceOf[A1], buffer(1).asInstanceOf[A2], buffer(2).asInstanceOf[A3], buffer(3).asInstanceOf[A4], buffer(4).asInstanceOf[A5], buffer(5).asInstanceOf[A6], buffer(6).asInstanceOf[A7], buffer(7).asInstanceOf[A8])
     }
   }
 
-  def decodeCaseClass9[A1, A2, A3, A4, A5, A6, A7, A8, A9, Z](schema: Schema.CaseClass9[A1, A2, A3, A4, A5, A6, A7, A8, A9, Z], discriminator: Option[String]): Decoder[Z] = {
-    decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
+  def decodeCaseClass9[A1, A2, A3, A4, A5, A6, A7, A8, A9, Z](schema: Schema.CaseClass9[A1, A2, A3, A4, A5, A6, A7, A8, A9, Z], config: CirceCodec.Configuration, discriminator: Option[String]): Decoder[Z] = {
+    decodeFields(schema, config, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(buffer(0).asInstanceOf[A1], buffer(1).asInstanceOf[A2], buffer(2).asInstanceOf[A3], buffer(3).asInstanceOf[A4], buffer(4).asInstanceOf[A5], buffer(5).asInstanceOf[A6], buffer(6).asInstanceOf[A7], buffer(7).asInstanceOf[A8], buffer(8).asInstanceOf[A9])
     }
   }
 
-  def decodeCaseClass10[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, Z](schema: Schema.CaseClass10[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, Z], discriminator: Option[String]): Decoder[Z] = {
-    decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
+  def decodeCaseClass10[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, Z](schema: Schema.CaseClass10[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, Z], config: CirceCodec.Configuration, discriminator: Option[String]): Decoder[Z] = {
+    decodeFields(schema, config, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(buffer(0).asInstanceOf[A1], buffer(1).asInstanceOf[A2], buffer(2).asInstanceOf[A3], buffer(3).asInstanceOf[A4], buffer(4).asInstanceOf[A5], buffer(5).asInstanceOf[A6], buffer(6).asInstanceOf[A7], buffer(7).asInstanceOf[A8], buffer(8).asInstanceOf[A9], buffer(9).asInstanceOf[A10])
     }
   }
 
-  def decodeCaseClass11[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, Z](schema: Schema.CaseClass11[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, Z], discriminator: Option[String]): Decoder[Z] = {
-    decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
+  def decodeCaseClass11[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, Z](schema: Schema.CaseClass11[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, Z], config: CirceCodec.Configuration, discriminator: Option[String]): Decoder[Z] = {
+    decodeFields(schema, config, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(buffer(0).asInstanceOf[A1], buffer(1).asInstanceOf[A2], buffer(2).asInstanceOf[A3], buffer(3).asInstanceOf[A4], buffer(4).asInstanceOf[A5], buffer(5).asInstanceOf[A6], buffer(6).asInstanceOf[A7], buffer(7).asInstanceOf[A8], buffer(8).asInstanceOf[A9], buffer(9).asInstanceOf[A10], buffer(10).asInstanceOf[A11])
     }
   }
 
-  def decodeCaseClass12[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, Z](schema: Schema.CaseClass12[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, Z], discriminator: Option[String]): Decoder[Z] = {
-    decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
+  def decodeCaseClass12[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, Z](schema: Schema.CaseClass12[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, Z], config: CirceCodec.Configuration, discriminator: Option[String]): Decoder[Z] = {
+    decodeFields(schema, config, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(buffer(0).asInstanceOf[A1], buffer(1).asInstanceOf[A2], buffer(2).asInstanceOf[A3], buffer(3).asInstanceOf[A4], buffer(4).asInstanceOf[A5], buffer(5).asInstanceOf[A6], buffer(6).asInstanceOf[A7], buffer(7).asInstanceOf[A8], buffer(8).asInstanceOf[A9], buffer(9).asInstanceOf[A10], buffer(10).asInstanceOf[A11], buffer(11).asInstanceOf[A12])
     }
   }
 
-  def decodeCaseClass13[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, Z](schema: Schema.CaseClass13[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, Z], discriminator: Option[String]): Decoder[Z] = {
-    decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
+  def decodeCaseClass13[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, Z](schema: Schema.CaseClass13[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, Z], config: CirceCodec.Configuration, discriminator: Option[String]): Decoder[Z] = {
+    decodeFields(schema, config, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(buffer(0).asInstanceOf[A1], buffer(1).asInstanceOf[A2], buffer(2).asInstanceOf[A3], buffer(3).asInstanceOf[A4], buffer(4).asInstanceOf[A5], buffer(5).asInstanceOf[A6], buffer(6).asInstanceOf[A7], buffer(7).asInstanceOf[A8], buffer(8).asInstanceOf[A9], buffer(9).asInstanceOf[A10], buffer(10).asInstanceOf[A11], buffer(11).asInstanceOf[A12], buffer(12).asInstanceOf[A13])
     }
   }
 
-  def decodeCaseClass14[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, Z](schema: Schema.CaseClass14[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, Z], discriminator: Option[String]): Decoder[Z] = {
-    decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
+  def decodeCaseClass14[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, Z](schema: Schema.CaseClass14[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, Z], config: CirceCodec.Configuration, discriminator: Option[String]): Decoder[Z] = {
+    decodeFields(schema, config, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(
         buffer(0).asInstanceOf[A1],
         buffer(1).asInstanceOf[A2],
@@ -876,8 +892,8 @@ private[circe] trait Codecs {
     }
   }
 
-  def decodeCaseClass15[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, Z](schema: Schema.CaseClass15[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, Z], discriminator: Option[String]): Decoder[Z] = {
-    decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
+  def decodeCaseClass15[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, Z](schema: Schema.CaseClass15[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, Z], config: CirceCodec.Configuration, discriminator: Option[String]): Decoder[Z] = {
+    decodeFields(schema, config, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(
         buffer(0).asInstanceOf[A1],
         buffer(1).asInstanceOf[A2],
@@ -898,8 +914,8 @@ private[circe] trait Codecs {
     }
   }
 
-  def decodeCaseClass16[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, Z](schema: Schema.CaseClass16[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, Z], discriminator: Option[String]): Decoder[Z] = {
-    decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
+  def decodeCaseClass16[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, Z](schema: Schema.CaseClass16[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, Z], config: CirceCodec.Configuration, discriminator: Option[String]): Decoder[Z] = {
+    decodeFields(schema, config, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(
         buffer(0).asInstanceOf[A1],
         buffer(1).asInstanceOf[A2],
@@ -921,8 +937,8 @@ private[circe] trait Codecs {
     }
   }
 
-  def decodeCaseClass17[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, Z](schema: Schema.CaseClass17[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, Z], discriminator: Option[String]): Decoder[Z] = {
-    decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
+  def decodeCaseClass17[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, Z](schema: Schema.CaseClass17[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, Z], config: CirceCodec.Configuration, discriminator: Option[String]): Decoder[Z] = {
+    decodeFields(schema, config, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(
         buffer(0).asInstanceOf[A1],
         buffer(1).asInstanceOf[A2],
@@ -945,8 +961,8 @@ private[circe] trait Codecs {
     }
   }
 
-  def decodeCaseClass18[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, Z](schema: Schema.CaseClass18[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, Z], discriminator: Option[String]): Decoder[Z] = {
-    decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
+  def decodeCaseClass18[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, Z](schema: Schema.CaseClass18[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, Z], config: CirceCodec.Configuration, discriminator: Option[String]): Decoder[Z] = {
+    decodeFields(schema, config, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(
         buffer(0).asInstanceOf[A1],
         buffer(1).asInstanceOf[A2],
@@ -970,8 +986,8 @@ private[circe] trait Codecs {
     }
   }
 
-  def decodeCaseClass19[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, Z](schema: Schema.CaseClass19[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, Z], discriminator: Option[String]): Decoder[Z] = {
-    decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
+  def decodeCaseClass19[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, Z](schema: Schema.CaseClass19[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, Z], config: CirceCodec.Configuration, discriminator: Option[String]): Decoder[Z] = {
+    decodeFields(schema, config, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(
         buffer(0).asInstanceOf[A1],
         buffer(1).asInstanceOf[A2],
@@ -996,8 +1012,8 @@ private[circe] trait Codecs {
     }
   }
 
-  def decodeCaseClass20[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20, Z](schema: Schema.CaseClass20[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20, Z], discriminator: Option[String]): Decoder[Z] = {
-    decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
+  def decodeCaseClass20[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20, Z](schema: Schema.CaseClass20[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20, Z], config: CirceCodec.Configuration, discriminator: Option[String]): Decoder[Z] = {
+    decodeFields(schema, config, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(
         buffer(0).asInstanceOf[A1],
         buffer(1).asInstanceOf[A2],
@@ -1023,8 +1039,8 @@ private[circe] trait Codecs {
     }
   }
 
-  def decodeCaseClass21[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20, A21, Z](schema: Schema.CaseClass21[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20, A21, Z], discriminator: Option[String]): Decoder[Z] = {
-    decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
+  def decodeCaseClass21[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20, A21, Z](schema: Schema.CaseClass21[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20, A21, Z], config: CirceCodec.Configuration, discriminator: Option[String]): Decoder[Z] = {
+    decodeFields(schema, config, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(
         buffer(0).asInstanceOf[A1],
         buffer(1).asInstanceOf[A2],
@@ -1051,8 +1067,8 @@ private[circe] trait Codecs {
     }
   }
 
-  def decodeCaseClass22[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20, A21, A22, Z](schema: Schema.CaseClass22[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20, A21, A22, Z], discriminator: Option[String]): Decoder[Z] = {
-    decodeFields(schema, discriminator).map { (buffer: Array[Any]) =>
+  def decodeCaseClass22[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20, A21, A22, Z](schema: Schema.CaseClass22[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20, A21, A22, Z], config: CirceCodec.Configuration, discriminator: Option[String]): Decoder[Z] = {
+    decodeFields(schema, config, discriminator).map { (buffer: Array[Any]) =>
       schema.construct(
         buffer(0).asInstanceOf[A1],
         buffer(1).asInstanceOf[A2],
@@ -1080,7 +1096,7 @@ private[circe] trait Codecs {
     }
   }
 
-  private def decodeFields[Z](schema: Schema.Record[Z], discriminator: Option[String]): Decoder[Array[Any]] = new Decoder[Array[Any]] {
+  private def decodeFields[Z](schema: Schema.Record[Z], config: CirceCodec.Configuration, discriminator: Option[String]): Decoder[Array[Any]] = new Decoder[Array[Any]] {
 
     val len      = schema.fields.length
     val fields   = new Array[Schema.Field[Z, _]](len)
@@ -1091,7 +1107,7 @@ private[circe] trait Codecs {
     var i = 0
     schema.fields.foreach { field =>
       fields(i) = field
-      decoders(i) = decodeSchema(field.schema)
+      decoders(i) = decodeSchema(field.schema, config)
       val name = field.fieldName
       names += name
       aliases.put(name, i)
@@ -1107,7 +1123,9 @@ private[circe] trait Codecs {
       aliases.put(name, len)
     }
 
-    val rejectExtraFields = schema.annotations.exists(_.isInstanceOf[rejectExtraFields])
+    val explicitEmptyCollections = config.explicitEmptyCollections.decoding
+    val explicitNulls            = config.explicitNullValues.decoding
+    val rejectExtraFields        = schema.annotations.exists(_.isInstanceOf[rejectExtraFields])
 
     override def apply(c: HCursor): Decoder.Result[Array[Any]] = {
       val buffer = Array.ofDim[Any](len)
@@ -1143,9 +1161,9 @@ private[circe] trait Codecs {
                 case _                 =>
               }
               schema match {
-                case collection: Schema.Collection[_, _] => buffer(i) = collection.empty
-                case _: Schema.Optional[_]               => buffer(i) = None
-                case _                                   =>
+                case collection: Schema.Collection[_, _] if !explicitEmptyCollections => buffer(i) = collection.empty
+                case _: Schema.Optional[_] if !explicitNulls                          => buffer(i) = None
+                case _                                                                =>
                   throw DecodingFailure(s"Missing field: ${fields(i).name}", c.history)
               }
             }
