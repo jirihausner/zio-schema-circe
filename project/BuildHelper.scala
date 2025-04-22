@@ -99,6 +99,7 @@ object BuildHelper {
           "-Ywarn-nullary-override",
           "-Ywarn-nullary-unit",
           "-Wconf:cat=unused-nowarn:s",
+          "-Wconf:cat=deprecation:silent",
         ) ++ std2xOptions ++ optimizerOptions
       case _             => Seq.empty
     }
