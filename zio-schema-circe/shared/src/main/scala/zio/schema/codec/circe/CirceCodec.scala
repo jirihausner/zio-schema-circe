@@ -5,7 +5,7 @@ import zio.schema._
 import zio.schema.codec.circe.internal.{Codecs, JsonSplitter}
 import zio.schema.codec.{BinaryCodec, DecodeError}
 import zio.stream.ZPipeline
-import zio.{Cause, Chunk, ZIO}
+import zio.{Cause, Chunk}
 
 import java.nio.CharBuffer
 import java.nio.charset.StandardCharsets
@@ -14,7 +14,7 @@ object CirceCodec {
 
   @deprecated(
     """Use CirceCodec.Configuration instead.
- CirceCodec.Configuration allows configuring encoding/decoding of empty collection and nulls (options) independently.""",
+ CirceCodec.Configuration allows configuring encoding/decoding of empty collection and nulls independently.""",
     "0.3.2",
   )
   final case class Config(
@@ -39,7 +39,7 @@ object CirceCodec {
 
     @deprecated(
       """Use CirceCodec.Configuration.default instead.
- CirceCodec.Configuration allows configuring encoding/decoding of empty collection and nulls (options) independently.""",
+ CirceCodec.Configuration allows configuring encoding/decoding of empty collection and nulls independently.""",
       "0.3.2",
     )
     val default: Config = Config(ignoreEmptyCollections = false)
@@ -52,18 +52,83 @@ object CirceCodec {
    */
   final case class ExplicitConfig(encoding: Boolean = true, decoding: Boolean = false)
 
+  /**
+   * Configuration for the JSON codec. The configurations are overruled by the
+   * annotations that configure the same behavior.
+   *
+   * @param explicitEmptyCollections
+   *   whether to encode empty collections as `[]` or omit the field and decode
+   *   the field when it is missing as an empty collection or fail
+   * @param explicitNulls
+   *   whether to encode empty Options as `null` or omit the field and decode
+   *   the field when it is missing to None or fail
+   * @param discriminatorSettings
+   *   set up how to handle discriminators
+   * @param fieldNameFormat
+   *   format for the field names
+   * @param treatStreamsAsArrays
+   *   whether to treat streams as arrays when encoding/decoding
+   * @param rejectExtraFields
+   *   whether to reject extra fields during decoding
+   */
   final case class Configuration(
     explicitEmptyCollections: ExplicitConfig = ExplicitConfig(),
     explicitNullValues: ExplicitConfig = ExplicitConfig(),
+    discriminatorSettings: DiscriminatorSetting = DiscriminatorSetting.default,
+    fieldNameFormat: NameFormat = NameFormat.Identity,
     treatStreamsAsArrays: Boolean = false,
+    rejectExtraFields: Boolean = false,
   ) {
-    def ignoreEmptyCollections: Configuration =
+    def withEmptyCollectionsIgnored: Configuration =
       copy(explicitEmptyCollections = ExplicitConfig(encoding = false, decoding = false))
-    def ignoreNullValues: Configuration = copy(explicitNullValues = ExplicitConfig(encoding = false, decoding = false))
+
+    def withNullValuesIgnored: Configuration =
+      copy(explicitNullValues = ExplicitConfig(encoding = false, decoding = false))
+
+    def withNoDiscriminator: Configuration = copy(discriminatorSettings = DiscriminatorSetting.NoDiscriminator)
+
+    def withDiscriminator(format: NameFormat): Configuration =
+      copy(discriminatorSettings = DiscriminatorSetting.ClassName(format))
+
+    def withDiscriminator(name: String, format: NameFormat = NameFormat.Identity): Configuration =
+      copy(discriminatorSettings = DiscriminatorSetting.Name(name, format))
+
+    def withFieldFormat(format: NameFormat): Configuration = copy(fieldNameFormat = format)
+
+    def withStreamsTreatedAsArrays: Configuration = copy(treatStreamsAsArrays = true)
+
+    def withExtraFieldsSkipped: Configuration = copy(rejectExtraFields = false)
+
+    def withExtraFieldsRejected: Configuration = copy(rejectExtraFields = true)
+
+    val noDiscriminator: Boolean = discriminatorSettings match {
+      case DiscriminatorSetting.NoDiscriminator => true
+      case _                                    => false
+    }
+
+    val discriminatorName: Option[String] = discriminatorSettings match {
+      case DiscriminatorSetting.Name(name, _) => Some(name)
+      case _                                  => None
+    }
+
+    val discriminatorFormat: NameFormat = discriminatorSettings match {
+      case DiscriminatorSetting.ClassName(format) => format
+      case DiscriminatorSetting.Name(_, format)   => format
+      case _                                      => NameFormat.Identity
+    }
   }
 
   object Configuration {
     val default: Configuration = Configuration()
+  }
+
+  sealed trait DiscriminatorSetting
+
+  object DiscriminatorSetting {
+    val default: ClassName = ClassName(NameFormat.Identity)
+    case class ClassName(format: NameFormat)                                extends DiscriminatorSetting
+    case object NoDiscriminator                                             extends DiscriminatorSetting
+    case class Name(name: String, format: NameFormat = NameFormat.Identity) extends DiscriminatorSetting
   }
 
   implicit def circeBinaryCodec[A](implicit codec: Encoder[A] with Decoder[A]): BinaryCodec[A] =
@@ -79,13 +144,13 @@ object CirceCodec {
         if (config.treatStreamsAsArrays) {
           val interspersed: ZPipeline[Any, Nothing, A, Byte] = ZPipeline
             .mapChunks[A, Chunk[Byte]](_.map(encode))
-            .intersperse(Chunk.single(','.toByte))
+            .intersperse(JsonSplitter.jsonArraySeparator)
             .flattenChunks
           val prepended: ZPipeline[Any, Nothing, A, Byte]    =
-            interspersed >>> ZPipeline.prepend(Chunk.single('['.toByte))
-          prepended >>> ZPipeline.append(Chunk.single(']'.toByte))
+            interspersed >>> ZPipeline.prepend(JsonSplitter.jsonArrayPrefix)
+          prepended >>> ZPipeline.append(JsonSplitter.jsonArrayPostfix)
         } else {
-          ZPipeline.mapChunks[A, Chunk[Byte]](_.map(encode)).intersperse(Chunk.single('\n'.toByte)).flattenChunks
+          ZPipeline.mapChunks[A, Chunk[Byte]](_.map(encode)).intersperse(JsonSplitter.jsonNdSeparator).flattenChunks
         }
 
       override def decode(whole: Chunk[Byte]): Either[DecodeError, A] =
@@ -100,10 +165,8 @@ object CirceCodec {
         } >>>
           (if (config.treatStreamsAsArrays) JsonSplitter.splitJsonArrayElements
            else JsonSplitter.splitOnJsonBoundary) >>>
-          ZPipeline.mapZIO { (str: String) =>
-            ZIO
-              .fromEither(parser.decode[A](str))
-              .mapError(failure => DecodeError.ReadError(Cause.empty, failure.getMessage))
+          ZPipeline.mapEitherChunked { (json: String) =>
+            parser.decode[A](json).left.map(error => DecodeError.ReadError(Cause.fail(error), error.getMessage))
           }
     }
 
@@ -120,13 +183,13 @@ object CirceCodec {
         if (config.treatStreamsAsArrays) {
           val interspersed: ZPipeline[Any, Nothing, A, Byte] = ZPipeline
             .mapChunks[A, Chunk[Byte]](_.map(encode))
-            .intersperse(Chunk.single(','.toByte))
+            .intersperse(JsonSplitter.jsonArraySeparator)
             .flattenChunks
           val prepended: ZPipeline[Any, Nothing, A, Byte]    =
-            interspersed >>> ZPipeline.prepend(Chunk.single('['.toByte))
-          prepended >>> ZPipeline.append(Chunk.single(']'.toByte))
+            interspersed >>> ZPipeline.prepend(JsonSplitter.jsonArrayPrefix)
+          prepended >>> ZPipeline.append(JsonSplitter.jsonArrayPostfix)
         } else {
-          ZPipeline.mapChunks[A, Chunk[Byte]](_.map(encode)).intersperse(Chunk.single('\n'.toByte)).flattenChunks
+          ZPipeline.mapChunks[A, Chunk[Byte]](_.map(encode)).intersperse(JsonSplitter.jsonNdSeparator).flattenChunks
         }
 
       override def decode(whole: Chunk[Byte]): Either[DecodeError, A] =
@@ -139,13 +202,11 @@ object CirceCodec {
         ZPipeline.utfDecode.mapError(cce => DecodeError.ReadError(Cause.fail(cce), cce.getMessage)) >>>
           (if (config.treatStreamsAsArrays) JsonSplitter.splitJsonArrayElements
            else JsonSplitter.splitOnJsonBoundary) >>>
-          ZPipeline.mapZIO { (json: String) =>
-            ZIO.fromEither(
-              CirceDecoder
-                .decode(schema, json, config)
-                .left
-                .map(e => DecodeError.ReadError(Cause.fail(e), e.getMessage)),
-            )
+          ZPipeline.mapEitherChunked { (json: String) =>
+            CirceDecoder
+              .decode(schema, json, config)
+              .left
+              .map(error => DecodeError.ReadError(Cause.fail(error), error.getMessage))
           }
     }
 

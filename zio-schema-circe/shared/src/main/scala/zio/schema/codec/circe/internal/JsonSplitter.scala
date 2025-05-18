@@ -124,4 +124,9 @@ private[circe] object JsonSplitter {
 
   val splitOnJsonBoundary: ZPipeline[Any, Nothing, String, String] = JsonSplitter.jsonSplitter(wrappedInArray = false)
   val splitJsonArrayElements: ZPipeline[Any, Nothing, String, String] = JsonSplitter.jsonSplitter(wrappedInArray = true)
+
+  val jsonNdSeparator: Chunk[Byte]    = Chunk.single('\n'.toByte)
+  val jsonArraySeparator: Chunk[Byte] = Chunk.single(','.toByte)
+  val jsonArrayPrefix: Chunk[Byte]    = Chunk.single('['.toByte)
+  val jsonArrayPostfix: Chunk[Byte]   = Chunk.single(']'.toByte)
 }

@@ -9,7 +9,7 @@ import zio.schema.codec.circe.internal.JsonSplitter
 import zio.schema.codec.circe.jsoniter.internal.Codecs
 import zio.schema.codec.{BinaryCodec, DecodeError}
 import zio.stream.ZPipeline
-import zio.{Cause, Chunk, ZIO}
+import zio.{Cause, Chunk}
 
 import java.nio.charset.StandardCharsets
 
@@ -29,13 +29,13 @@ object CirceJsoniterCodec {
         if (config.treatStreamsAsArrays) {
           val interspersed: ZPipeline[Any, Nothing, A, Byte] = ZPipeline
             .mapChunks[A, Chunk[Byte]](_.map(encode))
-            .intersperse(Chunk.single(','.toByte))
+            .intersperse(JsonSplitter.jsonArraySeparator)
             .flattenChunks
           val prepended: ZPipeline[Any, Nothing, A, Byte]    =
-            interspersed >>> ZPipeline.prepend(Chunk.single('['.toByte))
-          prepended >>> ZPipeline.append(Chunk.single(']'.toByte))
+            interspersed >>> ZPipeline.prepend(JsonSplitter.jsonArrayPrefix)
+          prepended >>> ZPipeline.append(JsonSplitter.jsonArrayPostfix)
         } else {
-          ZPipeline.mapChunks[A, Chunk[Byte]](_.map(encode)).intersperse(Chunk.single('\n'.toByte)).flattenChunks
+          ZPipeline.mapChunks[A, Chunk[Byte]](_.map(encode)).intersperse(JsonSplitter.jsonNdSeparator).flattenChunks
         }
 
       override def decode(whole: Chunk[Byte]): Either[DecodeError, A] =
@@ -48,10 +48,9 @@ object CirceJsoniterCodec {
         } >>>
           (if (config.treatStreamsAsArrays) JsonSplitter.splitJsonArrayElements
            else JsonSplitter.splitOnJsonBoundary) >>>
-          ZPipeline.mapZIO { (str: String) =>
-            ZIO
-              .fromEither(parser.decode[A](str))
-              .mapError(failure => DecodeError.ReadError(Cause.empty, failure.getMessage))
+          ZPipeline.mapEitherChunked { (json: String) =>
+            codec(readFromString(json)(jsonC3c).hcursor).left
+              .map(error => DecodeError.ReadError(Cause.fail(error), error.getMessage))
           }
     }
 
@@ -61,6 +60,22 @@ object CirceJsoniterCodec {
 
   def schemaBasedBinaryCodec[A](config: Configuration)(implicit schema: Schema[A]): BinaryCodec[A] =
     new BinaryCodec[A] {
+
+      override def encode(value: A): Chunk[Byte] =
+        CirceJsoniterEncoder.encode(schema, value, config)
+
+      override def streamEncoder: ZPipeline[Any, Nothing, A, Byte] =
+        if (config.treatStreamsAsArrays) {
+          val interspersed: ZPipeline[Any, Nothing, A, Byte] = ZPipeline
+            .mapChunks[A, Chunk[Byte]](_.map(encode))
+            .intersperse(JsonSplitter.jsonArraySeparator)
+            .flattenChunks
+          val prepended: ZPipeline[Any, Nothing, A, Byte]    =
+            interspersed >>> ZPipeline.prepend(JsonSplitter.jsonArrayPrefix)
+          prepended >>> ZPipeline.append(JsonSplitter.jsonArrayPostfix)
+        } else {
+          ZPipeline.mapChunks[A, Chunk[Byte]](_.map(encode)).intersperse(JsonSplitter.jsonNdSeparator).flattenChunks
+        }
 
       override def decode(whole: Chunk[Byte]): Either[DecodeError, A] =
         CirceJsoniterDecoder
@@ -76,30 +91,12 @@ object CirceJsoniterCodec {
         ZPipeline.utfDecode.mapError(cce => DecodeError.ReadError(Cause.fail(cce), cce.getMessage)) >>>
           (if (config.treatStreamsAsArrays) JsonSplitter.splitJsonArrayElements
            else JsonSplitter.splitOnJsonBoundary) >>>
-          ZPipeline.mapZIO { (json: String) =>
-            ZIO.fromEither(
-              CirceJsoniterDecoder
-                .decode(schema, json, config)
-                .left
-                .map(e => DecodeError.ReadError(Cause.fail(e), e.getMessage)),
-            )
+          ZPipeline.mapEitherChunked { (json: String) =>
+            CirceJsoniterDecoder
+              .decode(schema, json, config)
+              .left
+              .map(error => DecodeError.ReadError(Cause.fail(error), error.getMessage))
           }
-
-      override def encode(value: A): Chunk[Byte] =
-        CirceJsoniterEncoder.encode(schema, value, config)
-
-      override def streamEncoder: ZPipeline[Any, Nothing, A, Byte] =
-        if (config.treatStreamsAsArrays) {
-          val interspersed: ZPipeline[Any, Nothing, A, Byte] = ZPipeline
-            .mapChunks[A, Chunk[Byte]](_.map(encode))
-            .intersperse(Chunk.single(','.toByte))
-            .flattenChunks
-          val prepended: ZPipeline[Any, Nothing, A, Byte]    =
-            interspersed >>> ZPipeline.prepend(Chunk.single('['.toByte))
-          prepended >>> ZPipeline.append(Chunk.single(']'.toByte))
-        } else {
-          ZPipeline.mapChunks[A, Chunk[Byte]](_.map(encode)).intersperse(Chunk.single('\n'.toByte)).flattenChunks
-        }
     }
 
   @deprecated("Use Configuration based method instead", "0.3.2")

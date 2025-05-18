@@ -1,6 +1,7 @@
 package zio.schema.codec.circe.internal
 
 import zio.schema._
+import zio.schema.codec.circe.CirceCodec.Configuration
 import zio.schema.codec.circe.internal.Data._
 import zio.stream.ZStream
 import zio.test._
@@ -12,11 +13,7 @@ import zio.{Console, ZIO}
  */
 private[circe] trait EncoderDecoderSpecs {
 
-  type Config
-
-  protected def DefaultConfig: Config
-
-  protected def BinaryCodec[A]: (Schema[A], Config) => codec.BinaryCodec[A]
+  protected def BinaryCodec[A]: (Schema[A], Configuration) => codec.BinaryCodec[A]
 
   final protected def assertEncodesThenDecodesFallback[A, B](
     schema: Schema.Fallback[A, B],
@@ -25,13 +22,13 @@ private[circe] trait EncoderDecoderSpecs {
     ZStream
       .succeed(value)
       .via(
-        BinaryCodec[zio.schema.Fallback[A, B]](schema, DefaultConfig).streamEncoder,
+        BinaryCodec[zio.schema.Fallback[A, B]](schema, Configuration.default).streamEncoder,
       )
       .runCollect
       .flatMap { encoded =>
         ZStream
           .fromChunk(encoded)
-          .via(BinaryCodec[zio.schema.Fallback[A, B]](schema, DefaultConfig).streamDecoder)
+          .via(BinaryCodec[zio.schema.Fallback[A, B]](schema, Configuration.default).streamDecoder)
           .runCollect
       }
       .either
@@ -60,7 +57,7 @@ private[circe] trait EncoderDecoderSpecs {
     value: A1,
     compare: (A1, A2) => Boolean,
     debug: Boolean = false,
-    config: Config = DefaultConfig,
+    config: Configuration = Configuration.default,
   ): ZIO[Any, Nothing, TestResult] =
     ZStream
       .succeed(value)
