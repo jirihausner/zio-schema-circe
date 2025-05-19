@@ -15,8 +15,8 @@
 In order to use this library, we need to add one of the following lines in our `build.sbt` file:
 
 ```scala
-libraryDependencies += "io.github.jirihausner" %% "zio-schema-circe"          % "0.3.1"
-libraryDependencies += "io.github.jirihausner" %% "zio-schema-circe-jsoniter" % "0.3.1"
+libraryDependencies += "io.github.jirihausner" %% "zio-schema-circe"          % "1.0.0"
+libraryDependencies += "io.github.jirihausner" %% "zio-schema-circe-jsoniter" % "1.0.0"
 ```
 
 `zio-schema-circe-jsoniter` uses [plokhotnyuk's jsoniter-scala Circe booster](https://github.com/plokhotnyuk/jsoniter-scala/tree/master/jsoniter-scala-circe) under the hood.
@@ -51,7 +51,17 @@ circeBinaryCodec[Person](deriveCodec) // zio.schema.codec.BinaryCodec[Person]
 // derive circe BinaryCodec from schema
 import zio.schema.codec.circe.CirceCodec.schemaBasedBinaryCodec
 
-schemaBasedBinaryCodec[Person](CirceCodec.Config.default) // zio.schema.codec.BinaryCodec[Person]
+schemaBasedBinaryCodec[Person] // zio.schema.codec.BinaryCodec[Person]
+
+// derive circe BinaryCodec from schema with custom configuration
+import zio.schema.NameFormat
+import zio.schema.codec.circe.Configuration
+
+val config = Configuration()
+  .withEmptyCollectionsIgnored
+  .withNullValuesIgnored
+  .withDiscriminator("type", format = NameFormat.SnakeCase)
+schemaBasedBinaryCodec[Person](config) // zio.schema.codec.BinaryCodec[Person]
 ```
 
 ## Acknowledgements
