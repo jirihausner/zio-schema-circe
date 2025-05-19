@@ -3,9 +3,9 @@ package zio.schema.codec.circe.internal
 import zio.prelude.NonEmptyMap
 import zio.schema._
 import zio.schema.annotation._
-import zio.schema.codec.circe.CirceCodec.CirceEncoder.charSequenceToByteChunk
-import zio.schema.codec.circe.CirceCodec.Configuration
+import zio.schema.codec.circe.Configuration
 import zio.schema.codec.circe.internal.Data._
+import zio.schema.codec.circe.internal.charSequenceToByteChunk
 import zio.stream.ZStream
 import zio.test.Assertion._
 import zio.test.TestAspect.ignore

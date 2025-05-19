@@ -4,25 +4,25 @@ import io.circe._
 import zio._
 import zio.schema._
 import zio.schema.codec.DecodeError
-import zio.schema.codec.circe.CirceCodec.{Configuration, ExplicitConfig}
 import zio.schema.codec.circe.internal._
+import zio.schema.codec.circe.{Configuration, ExplicitConfig}
 import zio.test.TestAspect._
 import zio.test._
 
 object CirceCodecSpec extends ZIOSpecDefault with EncoderSpecs with DecoderSpecs with EncoderDecoderSpecs {
 
   override protected def IgnoreEmptyCollectionsConfig: Configuration       =
-    CirceCodec.Configuration.default.withEmptyCollectionsIgnored.withNullValuesIgnored
+    Configuration.default.withEmptyCollectionsIgnored.withNullValuesIgnored
   override protected def KeepNullsAndEmptyColleciontsConfig: Configuration =
-    CirceCodec.Configuration.default.copy(
+    Configuration.default.copy(
       explicitEmptyCollections = ExplicitConfig(decoding = true),
       explicitNullValues = ExplicitConfig(decoding = true),
     )
   override protected def StreamingConfig: Configuration                    =
-    CirceCodec.Configuration.default.copy(treatStreamsAsArrays = true)
+    Configuration.default.copy(treatStreamsAsArrays = true)
 
   override protected def BinaryCodec[A]: (Schema[A], Configuration) => codec.BinaryCodec[A] =
-    (schema: Schema[A], config: CirceCodec.Configuration) => CirceCodec.schemaBasedBinaryCodec(config)(schema)
+    (schema: Schema[A], config: Configuration) => CirceCodec.schemaBasedBinaryCodec(config)(schema)
 
   def circeASTSuite(implicit
     schemaJson: Schema[Json],
@@ -102,7 +102,7 @@ object CirceCodecSpec extends ZIOSpecDefault with EncoderSpecs with DecoderSpecs
             schemaJson,
             Json.arr(Json.Null),
             """[]""",
-            CirceCodec.Configuration.default.copy(
+            Configuration.default.copy(
               explicitEmptyCollections = ExplicitConfig(encoding = false),
               explicitNullValues = ExplicitConfig(encoding = false),
             ),
@@ -189,7 +189,7 @@ object CirceCodecSpec extends ZIOSpecDefault with EncoderSpecs with DecoderSpecs
             schemaJson,
             Json.obj("foo" -> Json.fromString("bar"), "null" -> Json.Null),
             """{"foo":"bar"}""",
-            CirceCodec.Configuration.default.copy(
+            Configuration.default.copy(
               explicitEmptyCollections = ExplicitConfig(encoding = false),
               explicitNullValues = ExplicitConfig(encoding = false),
             ),
@@ -216,7 +216,7 @@ object CirceCodecSpec extends ZIOSpecDefault with EncoderSpecs with DecoderSpecs
           schemaJsonObject,
           JsonObject("foo" -> Json.fromString("bar"), "null" -> Json.Null),
           """{"foo":"bar","null":null}""",
-          CirceCodec.Configuration.default.copy(
+          Configuration.default.copy(
             explicitEmptyCollections = ExplicitConfig(decoding = true),
             explicitNullValues = ExplicitConfig(decoding = true),
           ),
@@ -227,7 +227,7 @@ object CirceCodecSpec extends ZIOSpecDefault with EncoderSpecs with DecoderSpecs
           schemaJsonObject,
           JsonObject("foo" -> Json.fromString("bar"), "null" -> Json.Null),
           """{"foo":"bar"}""",
-          CirceCodec.Configuration.default.copy(
+          Configuration.default.copy(
             explicitEmptyCollections = ExplicitConfig(encoding = false),
             explicitNullValues = ExplicitConfig(encoding = false),
           ),
