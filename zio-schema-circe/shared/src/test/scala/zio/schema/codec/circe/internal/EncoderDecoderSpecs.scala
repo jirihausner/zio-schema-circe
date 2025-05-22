@@ -1,7 +1,7 @@
 package zio.schema.codec.circe.internal
 
 import zio.schema._
-import zio.schema.codec.circe.CirceCodec.Configuration
+import zio.schema.codec.circe.Configuration
 import zio.schema.codec.circe.internal.Data._
 import zio.stream.ZStream
 import zio.test._
