@@ -3,8 +3,6 @@ import com.typesafe.tools.mima.core._
 import com.typesafe.tools.mima.plugin.MimaKeys.mimaPreviousArtifacts
 import xerial.sbt.Sonatype.sonatypeCentralHost
 
-lazy val binCompatVersionToCompare = None
-
 inThisBuild(
   List(
     organization := "io.github.jirihausner",
