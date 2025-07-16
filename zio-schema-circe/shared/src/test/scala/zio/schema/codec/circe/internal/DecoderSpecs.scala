@@ -1111,11 +1111,11 @@ private[circe] trait DecoderSpecs extends StringUtils {
           assertDecodesMany(Schema[Int], "1 2 3 4 5", Chunk.fromIterable(1 to 5))
         },
         test("decodes a stream with multiple integers separated by commas and other non JSON number characters") {
-          assertDecodesMany(Schema[Int], "1 2, 3;;; 4x5", Chunk.fromIterable(1 to 5), debug = true)
-        } @@ ignore, // FIXME: fails but should work
+          assertDecodesMany(Schema[Int], "1 2, 3;;; 4x5", Chunk.fromIterable(1 to 5))
+        },
         test("decodes a stream with multiple integers encoded as an array") {
-          assertDecodesMany(Schema[Int], "[1,2,3,4,5]", Chunk.fromIterable(1 to 5), StreamingConfig, debug = true)
-        } @@ ignore, // FIXME: fails but should work
+          assertDecodesMany(Schema[Int], "[1,2,3,4,5]", Chunk.fromIterable(1 to 5), StreamingConfig)
+        },
         test("decodes a stream with multiple integers encoded as an array with additional whitespace") {
           assertDecodesMany(
             Schema[Int],
@@ -1125,9 +1125,8 @@ private[circe] trait DecoderSpecs extends StringUtils {
               |4,   5]   """.stripMargin,
             Chunk.fromIterable(1 to 5),
             StreamingConfig,
-            debug = true,
           )
-        } @@ ignore, // FIXME: fails but should work
+        },
       ),
       suite("of booleans")(
         test("decodes a stream with multiple booleans separated by newlines") {
