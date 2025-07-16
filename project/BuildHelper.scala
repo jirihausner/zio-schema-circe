@@ -79,7 +79,7 @@ object BuildHelper {
       case Some((3, _))  =>
         Seq(
           "-Xignore-scala2-macros",
-          "-Xkind-projector",
+          "-Ykind-projector",
         )
       case Some((2, 13)) =>
         Seq(
