@@ -19,6 +19,7 @@ private[circe] object JsonSplitter {
   val ContextNullAfterFirstL = 'x'
   val ContextNumber          = 'n'
   val ContextEscape          = 'e'
+  val ContextIgnore          = 'i'
   val ContextDone            = 'd'
 
   def jsonSplitter(wrappedInArray: Boolean): ZPipeline[Any, Nothing, String, String] = {
@@ -66,7 +67,7 @@ private[circe] object JsonSplitter {
                   context = if (depth < 0) ContextDone else ContextJson
                   valueEnded = true
                 case _ if !validNumChars(c) =>
-                  context = ContextJson
+                  context = if (depth == 0) ContextIgnore else ContextJson
                   valueEnded = true
                 case _                      =>
               }
@@ -75,10 +76,11 @@ private[circe] object JsonSplitter {
               c match {
                 case '{' | '['             =>
                   depth += 1
+                  context = ContextJson
                 case '}' | ']'             =>
                   depth -= 1
                   valueEnded = true
-                  if (depth == -1) context = ContextDone
+                  context = if (depth == -1) ContextDone else ContextJson
                 case '"'                   =>
                   context = ContextString
                 case 't' | 'f'             =>
@@ -87,15 +89,21 @@ private[circe] object JsonSplitter {
                   context = ContextNull
                 case x if validNumChars(x) =>
                   context = ContextNumber
+                case ':'                   =>
+                  context = ContextJson
                 case _                     =>
+                  if (depth <= 0) context = ContextIgnore
               }
           }
-          if (context != ContextDone && (depth > 0 || context != ContextJson || valueEnded))
+          if (
+            context != ContextDone && context != ContextIgnore &&
+            (depth > 0 || context != ContextJson || valueEnded)
+          )
             stringBuilder.append(c)
 
           if (valueEnded && depth == 0) {
             val str = stringBuilder.result()
-            if (!str.forall(_.isWhitespace)) {
+            if (str.nonEmpty && !str.forall(_.isWhitespace)) {
               chunkBuilder += str
             }
             stringBuilder.clear()
