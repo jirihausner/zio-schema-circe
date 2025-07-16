@@ -17,7 +17,8 @@ private[circe] object Codecs extends Codecs
 
 private[circe] trait Codecs {
 
-  private val EmptyJsonObj: Json = Json.obj()
+  @inline
+  private def emptyJsonObj(): Json = Json.fromFields(Iterable.empty)
 
   type DiscriminatorTuple = Option[(String, String)]
 
@@ -379,7 +380,7 @@ private[circe] trait Codecs {
             }
             Json.arr(maybeValues.flatten: _*)
           case DynamicValue.Primitive(value, standardType) => encodePrimitive(standardType)(value)
-          case DynamicValue.Singleton(_)                   => EmptyJsonObj
+          case DynamicValue.Singleton(_)                   => emptyJsonObj()
           case DynamicValue.SomeValue(value)               => encoder(value)
           case DynamicValue.NoneValue                      => Json.Null
           case DynamicValue.Tuple(_, _)                    =>
@@ -442,6 +443,7 @@ private[circe] trait Codecs {
           if (schema.noDiscriminator || (config.noDiscriminator && schema.discriminatorName.isEmpty)) None
           else schema.discriminatorName.orElse(config.discriminatorName)
         val cases                = schema.nonTransientCases.toArray
+        val encodedKeys          = cases.map { case_ => format(case_.caseName) }
         val encoders             = cases.map { case_ =>
           val discriminatorTuple = discriminatorName.map(_ -> format(case_.caseName))
           encodeSchema(case_.schema.asInstanceOf[Schema[Any]], config, discriminatorTuple)
@@ -456,13 +458,13 @@ private[circe] trait Codecs {
             if (case_.isCase(value)) {
               val result = encoders(i)(case_.deconstruct(value))
               return {
-                if (doJsonObjectWrapping) Json.obj(format(case_.caseName) -> result)
+                if (doJsonObjectWrapping) Json.obj(encodedKeys(i) -> result)
                 else result
               }
             }
             i += 1
           }
-          EmptyJsonObj // for transient cases
+          emptyJsonObj() // for transient cases
         }
       }
     }
@@ -627,7 +629,7 @@ private[circe] trait Codecs {
       new Encoder[ListMap[String, _]] {
 
         val result = discriminator match {
-          case None        => EmptyJsonObj
+          case None        => emptyJsonObj()
           case Some(tuple) => Json.obj(tuple)
         }
 

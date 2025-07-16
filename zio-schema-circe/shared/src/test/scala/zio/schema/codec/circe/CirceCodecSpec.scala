@@ -83,7 +83,7 @@ object CirceCodecSpec extends ZIOSpecDefault with EncoderSpecs with DecoderSpecs
           assertEncodes(schemaJson, Json.arr(), """[]""") &&
           assertDecodes(schemaJson, """[]""", Json.arr())
         },
-        test("encodes and decodes an array containing with null") {
+        test("encodes and decodes an array containing null") {
           assertEncodes(
             schemaJson,
             Json.arr(Json.Null),
