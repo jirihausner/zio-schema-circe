@@ -290,7 +290,7 @@ private[circe] trait Codecs {
     case Schema.Primitive(StandardType.UUIDType, _)   => Some(KeyEncoder.encodeKeyUUID)
     case schema: Schema.Enum[_] if schema.annotations.exists(_.isInstanceOf[simpleEnum]) =>
       Some(KeyEncoder.encodeKeyString.contramap(caseMap(schema, config)))
-    case Schema.Transform(c, _, g, a, _)              =>
+    case Schema.Transform(c, _, g, a, _)                                                 =>
       encodeField(a.foldLeft(c)((s, a) => s.annotate(a)), config).map { encoder =>
         new KeyEncoder[B] {
           override def apply(b: B): String = g(b) match {
@@ -299,8 +299,8 @@ private[circe] trait Codecs {
           }
         }
       }
-    case Schema.Lazy(inner)                           => encodeField(inner(), config)
-    case _                                            => None
+    case Schema.Lazy(inner)                                                              => encodeField(inner(), config)
+    case _                                                                               => None
   }
 
   def decodeField[A](schema: Schema[A], config: CirceCodec.Configuration): Option[KeyDecoder[A]] = schema match {
@@ -321,7 +321,7 @@ private[circe] trait Codecs {
           def apply(key: String): Option[A] = Option(cases.get(key))
         }
       }
-    case Schema.Transform(c, f, _, a, _)              =>
+    case Schema.Transform(c, f, _, a, _)                                                 =>
       decodeField(a.foldLeft(c)((s, a) => s.annotate(a)), config).map { decoder =>
         decoder.map { key =>
           f(key) match {
@@ -330,8 +330,8 @@ private[circe] trait Codecs {
           }
         }
       }
-    case Schema.Lazy(inner)                           => decodeField(inner(), config)
-    case _                                            => None
+    case Schema.Lazy(inner)                                                              => decodeField(inner(), config)
+    case _                                                                               => None
   }
 
   def encodeMap[K, V](
