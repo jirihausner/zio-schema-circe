@@ -168,6 +168,10 @@ object CirceJsoniterCodec {
   def schemaBasedBinaryCodec[A](config: Config)(implicit schema: Schema[A]): BinaryCodec[A] =
     schemaBasedBinaryCodec(config.toConfiguration)
 
+  @inline
+  def schemaBasedBinaryCodec[A](implicit schema: Schema[A]): BinaryCodec[A] =
+    schemaBasedBinaryCodec(Configuration.default)
+
   def schemaBasedBinaryCodec[A](config: Configuration)(implicit schema: Schema[A]): BinaryCodec[A] =
     new BinaryCodec[A] {
 
