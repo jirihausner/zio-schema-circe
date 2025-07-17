@@ -15,7 +15,7 @@ object CirceCodec {
   @deprecated(
     """Use CirceCodec.Configuration instead.
  CirceCodec.Configuration allows configuring encoding/decoding of empty collection and nulls independently.""",
-    "0.3.2",
+    "0.4.0",
   )
   final case class Config(
     ignoreEmptyCollections: Boolean,
@@ -40,7 +40,7 @@ object CirceCodec {
     @deprecated(
       """Use CirceCodec.Configuration.default instead.
  CirceCodec.Configuration allows configuring encoding/decoding of empty collection and nulls independently.""",
-      "0.3.2",
+      "0.4.0",
     )
     val default: Config = Config(ignoreEmptyCollections = false)
   }
@@ -131,14 +131,37 @@ object CirceCodec {
     case class Name(name: String, format: NameFormat = NameFormat.Identity) extends DiscriminatorSetting
   }
 
+  object implicits {
+
+    @inline
+    implicit def circeBinaryCodec[A](implicit
+      decoder: Decoder[A],
+      encoder: Encoder[A],
+      config: Configuration,
+    ): BinaryCodec[A] = CirceCodec.circeBinaryCodec(config)
+
+    @inline
+    implicit def schemaBasedBinaryCodec[A](implicit schema: Schema[A], config: Configuration): BinaryCodec[A] =
+      CirceCodec.schemaBasedBinaryCodec(config)
+
+    @inline
+    implicit def schemaCodec[A](implicit schema: Schema[A], config: Configuration): Codec[A] =
+      Codec.from(Codecs.decodeSchema(schema, config), Codecs.encodeSchema(schema, config))
+  }
+
+  @deprecated("Use CirceCodec.implicits.circeBinaryCodec instead", "0.4.0")
   implicit def circeBinaryCodec[A](implicit codec: Encoder[A] with Decoder[A]): BinaryCodec[A] =
     circeBinaryCodec(Configuration.default)
 
-  implicit def circeBinaryCodec[A](config: Configuration)(implicit codec: Encoder[A] with Decoder[A]): BinaryCodec[A] =
+  @inline
+  def circeBinaryCodec[A](implicit encoder: Encoder[A], decoder: Decoder[A]): BinaryCodec[A] =
+    circeBinaryCodec(Configuration.default)
+
+  def circeBinaryCodec[A](config: Configuration)(implicit encoder: Encoder[A], decoder: Decoder[A]): BinaryCodec[A] =
     new BinaryCodec[A] {
 
       override def encode(value: A): Chunk[Byte] =
-        Chunk.fromArray(codec(value).noSpaces.getBytes(StandardCharsets.UTF_8))
+        Chunk.fromArray(encoder(value).noSpaces.getBytes(StandardCharsets.UTF_8))
 
       override def streamEncoder: ZPipeline[Any, Nothing, A, Byte] =
         if (config.treatStreamsAsArrays) {
@@ -170,9 +193,13 @@ object CirceCodec {
           }
     }
 
-  @deprecated("Use Configuration based method instead", "0.3.2")
+  @deprecated("Use Configuration based method instead", "0.4.0")
   def schemaBasedBinaryCodec[A](config: Config)(implicit schema: Schema[A]): BinaryCodec[A] =
     schemaBasedBinaryCodec(config.toConfiguration)
+
+  @inline
+  def schemaBasedBinaryCodec[A](implicit schema: Schema[A]): BinaryCodec[A] =
+    schemaBasedBinaryCodec(Configuration.default)
 
   def schemaBasedBinaryCodec[A](config: Configuration)(implicit schema: Schema[A]): BinaryCodec[A] =
     new BinaryCodec[A] {
@@ -210,10 +237,11 @@ object CirceCodec {
           }
     }
 
-  @deprecated("Use Configuration based method instead", "0.3.2")
+  @deprecated("Use Configuration based method instead", "0.4.0")
   def schemaEncoder[A](schema: Schema[A])(implicit config: Config = Config.default): Encoder[A] =
     Codecs.encodeSchema(schema, config.toConfiguration)
 
+  @inline
   def schemaEncoder[A](schema: Schema[A])(implicit config: Configuration): Encoder[A] =
     Codecs.encodeSchema(schema, config)
 
@@ -224,7 +252,7 @@ object CirceCodec {
       Chunk.fromByteBuffer(bytes)
     }
 
-    @deprecated("Use Configuration based method instead", "0.3.2")
+    @deprecated("Use Configuration based method instead", "0.4.0")
     final def encode[A](schema: Schema[A], value: A, config: Config): Chunk[Byte] =
       encode(schema, value, config.toConfiguration)
 
@@ -232,12 +260,13 @@ object CirceCodec {
       charSequenceToByteChunk(Codecs.encodeSchema(schema, config)(value).noSpaces)
   }
 
+  @inline
   def schemaDecoder[A](schema: Schema[A])(implicit config: Configuration = Configuration.default): Decoder[A] =
     Codecs.decodeSchema(schema, config)
 
   object CirceDecoder {
 
-    @deprecated("Use Configuration based method instead", "0.3.2")
+    @deprecated("Use Configuration based method instead", "0.4.0")
     final def decode[A](schema: Schema[A], json: String): Either[Error, A] =
       decode(schema, json, Configuration.default)
 
@@ -251,12 +280,13 @@ object CirceCodec {
     }
   }
 
-  @deprecated("Use Configuration based method instead", "0.3.2")
+  @deprecated("Use Configuration based method instead", "0.4.0")
   def schemaCodec[A](schema: Schema[A])(implicit config: Config = Config.default): Codec[A] = {
     val configuration: Configuration = config.toConfiguration
     Codec.from(Codecs.decodeSchema(schema, configuration), Codecs.encodeSchema(schema, configuration))
   }
 
+  @inline
   def schemaCodec[A](schema: Schema[A])(implicit config: Configuration): Codec[A] =
     Codec.from(Codecs.decodeSchema(schema, config), Codecs.encodeSchema(schema, config))
 }

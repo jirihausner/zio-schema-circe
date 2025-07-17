@@ -15,15 +15,38 @@ import java.nio.charset.StandardCharsets
 
 object CirceJsoniterCodec {
 
+  object implicits {
+
+    @inline
+    implicit def circeJsoniterBinaryCodec[A](implicit
+      decoder: Decoder[A],
+      encoder: Encoder[A],
+      config: Configuration,
+    ): BinaryCodec[A] = CirceJsoniterCodec.circeJsoniterBinaryCodec(config)
+
+    @inline
+    implicit def schemaBasedBinaryCodec[A](implicit schema: Schema[A], config: Configuration): BinaryCodec[A] =
+      CirceJsoniterCodec.schemaBasedBinaryCodec(config)
+
+    @inline
+    implicit def schemaCodec[A](implicit schema: Schema[A], config: Configuration): Codec[A] =
+      Codec.from(Codecs.decodeSchema(schema, config), Codecs.encodeSchema(schema, config))
+  }
+
+  @deprecated("Use CirceJsoniterCodec.implicits.circeJsoniterBinaryCodec instead", "0.4.0")
   implicit def circeJsoniterBinaryCodec[A](implicit codec: Encoder[A] with Decoder[A]): BinaryCodec[A] =
     circeJsoniterBinaryCodec(Configuration.default)
 
-  implicit def circeJsoniterBinaryCodec[A](
+  @inline
+  def circeJsoniterBinaryCodec[A](implicit encoder: Encoder[A], decoder: Decoder[A]): BinaryCodec[A] =
+    circeJsoniterBinaryCodec(Configuration.default)
+
+  def circeJsoniterBinaryCodec[A](
     config: Configuration,
-  )(implicit codec: Encoder[A] with Decoder[A]): BinaryCodec[A] =
+  )(implicit encoder: Encoder[A], decoder: Decoder[A]): BinaryCodec[A] =
     new BinaryCodec[A] {
 
-      override def encode(value: A): Chunk[Byte] = Chunk.fromArray(writeToArray(codec(value))(jsonC3c))
+      override def encode(value: A): Chunk[Byte] = Chunk.fromArray(writeToArray(encoder(value))(jsonC3c))
 
       override def streamEncoder: ZPipeline[Any, Nothing, A, Byte] =
         if (config.treatStreamsAsArrays) {
@@ -39,7 +62,7 @@ object CirceJsoniterCodec {
         }
 
       override def decode(whole: Chunk[Byte]): Either[DecodeError, A] =
-        codec(readFromArray(whole.toArray)(jsonC3c).hcursor).left
+        decoder(readFromArray(whole.toArray)(jsonC3c).hcursor).left
           .map(failure => DecodeError.ReadError(Cause.fail(failure), failure.getMessage))
 
       override def streamDecoder: ZPipeline[Any, DecodeError, Byte, A] =
@@ -49,12 +72,12 @@ object CirceJsoniterCodec {
           (if (config.treatStreamsAsArrays) JsonSplitter.splitJsonArrayElements
            else JsonSplitter.splitOnJsonBoundary) >>>
           ZPipeline.mapEitherChunked { (json: String) =>
-            codec(readFromString(json)(jsonC3c).hcursor).left
+            decoder(readFromString(json)(jsonC3c).hcursor).left
               .map(error => DecodeError.ReadError(Cause.fail(error), error.getMessage))
           }
     }
 
-  @deprecated("Use Configuration based method instead", "0.3.2")
+  @deprecated("Use Configuration based method instead", "0.4.0")
   def schemaBasedBinaryCodec[A](config: Config)(implicit schema: Schema[A]): BinaryCodec[A] =
     schemaBasedBinaryCodec(config.toConfiguration)
 
@@ -99,16 +122,17 @@ object CirceJsoniterCodec {
           }
     }
 
-  @deprecated("Use Configuration based method instead", "0.3.2")
+  @deprecated("Use Configuration based method instead", "0.4.0")
   def schemaEncoder[A](schema: Schema[A])(implicit config: Config = Config.default): Encoder[A] =
     Codecs.encodeSchema(schema, config.toConfiguration)
 
+  @inline
   def schemaEncoder[A](schema: Schema[A])(implicit config: Configuration): Encoder[A] =
     Codecs.encodeSchema(schema, config)
 
   object CirceJsoniterEncoder {
 
-    @deprecated("Use Configuration based method instead", "0.3.2")
+    @deprecated("Use Configuration based method instead", "0.4.0")
     final def encode[A](schema: Schema[A], value: A, config: Config): Chunk[Byte] =
       encode(schema, value, config.toConfiguration)
 
@@ -116,12 +140,13 @@ object CirceJsoniterCodec {
       Chunk.fromArray(writeToArray(Codecs.encodeSchema(schema, config)(value))(jsonC3c))
   }
 
+  @inline
   def schemaDecoder[A](schema: Schema[A])(implicit config: Configuration = Configuration.default): Decoder[A] =
     Codecs.decodeSchema(schema, config)
 
   object CirceJsoniterDecoder {
 
-    @deprecated("Use Configuration based method instead", "0.3.2")
+    @deprecated("Use Configuration based method instead", "0.4.0")
     final def decode[A](schema: Schema[A], json: String): Either[Error, A] =
       decode(schema, json, Configuration.default)
 
@@ -136,12 +161,13 @@ object CirceJsoniterCodec {
     }
   }
 
-  @deprecated("Use Configuration based method instead", "0.3.2")
+  @deprecated("Use Configuration based method instead", "0.4.0")
   def schemaCodec[A](schema: Schema[A])(implicit config: Config = Config.default): Codec[A] = {
     val configuration: Configuration = config.toConfiguration
     Codec.from(Codecs.decodeSchema(schema, configuration), Codecs.encodeSchema(schema, configuration))
   }
 
+  @inline
   def schemaCodec[A](schema: Schema[A])(implicit config: Configuration): Codec[A] =
     Codec.from(Codecs.decodeSchema(schema, config), Codecs.encodeSchema(schema, config))
 }
