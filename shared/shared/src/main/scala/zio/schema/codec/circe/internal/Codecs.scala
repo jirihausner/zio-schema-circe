@@ -5,7 +5,6 @@ import zio.Chunk
 import zio.prelude.NonEmptyMap
 import zio.schema._
 import zio.schema.annotation._
-import zio.schema.codec.circe.internal.Configuration
 
 import java.time.temporal.Temporal
 import java.util

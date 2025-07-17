@@ -6,7 +6,7 @@ import zio.Console.*
 import zio.*
 import zio.schema.*
 import zio.schema.annotation.*
-import zio.schema.codec.circe.JsonCodec.Configuration
+import zio.schema.codec.circe.CirceCodec.Configuration
 import zio.test.Assertion.*
 import zio.test.TestAspect.*
 import zio.test.{assert, assertTrue, Spec, TestEnvironment, ZIOSpecDefault}
