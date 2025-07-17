@@ -113,6 +113,13 @@ lazy val zioSchemaCirce =
     .settings(
       mimaBinaryIssueFilters ++= Seq(
         ProblemFilters.exclude[Problem]("zio.schema.codec.circe.internal.*"),
+        // internal api changes
+        ProblemFilters.exclude[DirectMissingMethodProblem]("zio.schema.codec.circe.package.folder"),
+        ProblemFilters.exclude[DirectMissingMethodProblem]("zio.schema.codec.circe.package.fromJson"),
+        ProblemFilters.exclude[DirectMissingMethodProblem]("zio.schema.codec.circe.package.toJson"),
+        ProblemFilters.exclude[DirectMissingMethodProblem]("zio.schema.codec.circe.package.toJsonNumber"),
+        ProblemFilters.exclude[DirectMissingMethodProblem]("zio.schema.codec.circe.package.toJsonObject"),
+        // replaced with (implicit config: Configuration = Configuration.default) implicit parameter
         ProblemFilters.exclude[DirectMissingMethodProblem]("zio.schema.codec.circe.CirceCodec.schemaDecoder"),
       ),
     )
@@ -139,6 +146,7 @@ lazy val zioSchemaCirceJsoniter =
     .settings(
       mimaBinaryIssueFilters ++= Seq(
         ProblemFilters.exclude[Problem]("zio.schema.codec.circe.jsoniter.internal.*"),
+        // caused by adding CirceJsoniterCodec.Config and CirceJsoniterCodec.Configuration
         ProblemFilters.exclude[IncompatibleResultTypeProblem](
           "zio.schema.codec.circe.jsoniter.CirceJsoniterCodec.schemaEncoder$default$2",
         ),

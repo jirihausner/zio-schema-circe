@@ -5,7 +5,6 @@ import zio._
 import zio.schema._
 import zio.schema.codec.DecodeError
 import zio.schema.codec.circe.CirceCodec.Configuration
-import zio.schema.codec.circe.ExplicitConfig
 import zio.schema.codec.circe.internal._
 import zio.test.TestAspect._
 import zio.test._

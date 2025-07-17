@@ -4,7 +4,7 @@ import io.circe.{Decoder, Encoder}
 import zio.durationInt
 import zio.schema.Schema
 import zio.schema.codec.circe.VersionSpecificCodecSpec
-import zio.schema.codec.circe.jsoniter.CirceJsoniterCode.Configuration
+import zio.schema.codec.circe.jsoniter.CirceJsoniterCodec.Configuration
 import zio.test.TestAspect.timeout
 import zio.test.{Spec, TestEnvironment}
 
