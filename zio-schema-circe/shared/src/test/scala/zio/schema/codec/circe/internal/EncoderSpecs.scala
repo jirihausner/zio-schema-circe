@@ -324,6 +324,22 @@ private[circe] trait EncoderSpecs extends StringUtils {
           """{"0":{"first":0,"second":true},"1":{"first":1,"second":false}}""",
         )
       },
+      test("of uuid keys and values") {
+        check(Gen.uuid) { uuid =>
+          assertEncodes(
+            Schema.map[java.util.UUID, Value],
+            Map(uuid -> Value(0, true)),
+            s"""{"$uuid":{"first":0,"second":true}}""",
+          )
+        }
+      },
+      test("of simple enums and values") {
+        assertEncodes(
+          Schema.map[Color, Value](Schema[Color], Schema[Value]),
+          Map(Color.Red -> Value(0, true), Color.Blue -> Value(1, false), Color.Grass -> Value(2, true)),
+          """{"Red":{"first":0,"second":true},"Blue":{"first":1,"second":false},"Green":{"first":2,"second":true}}""",
+        )
+      },
       test("of simple keys and values where the key's schema is lazy") {
         assertEncodes(
           Schema.map[Int, Value](Schema.defer(Schema[Int]), Schema[Value]),
