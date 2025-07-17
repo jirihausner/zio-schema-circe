@@ -4,7 +4,7 @@ import com.github.plokhotnyuk.jsoniter_scala.circe.CirceCodecs
 import io.circe.{Json, JsonNumber, JsonObject}
 import zio.Chunk
 import zio.schema.annotation.directDynamicMapping
-import zio.schema.codec.circe
+import zio.schema.codec.circe.internal._
 import zio.schema.{DynamicValue, Schema, StandardType}
 
 import java.util.Base64
@@ -12,13 +12,21 @@ import java.util.Base64
 package object jsoniter {
 
   implicit val schemaJson: Schema[Json] =
-    Schema.dynamicValue.transform(toJson, circe.fromJson).annotate(directDynamicMapping())
+    Schema.dynamicValue
+      .transform(toJson, dynamicValueFromJson)
+      .annotate(directDynamicMapping())
 
-  implicit val schemaJsonObject: Schema[JsonObject] = circe.schemaJsonObject
+  implicit val schemaJsonObject: Schema[JsonObject] =
+    Schema.dynamicValue
+      .transform(dynamicValueToJsonObject, (obj: JsonObject) => dynamicValueFromJson(obj.toJson))
+      .annotate(directDynamicMapping())
 
   implicit val schemaJsonNumber: Schema[JsonNumber] =
     Schema.dynamicValue
-      .transformOrFail(toJsonNumber, (number: JsonNumber) => Right(circe.fromJson(Json.fromJsonNumber(number))))
+      .transformOrFail(
+        toJsonNumber,
+        (number: JsonNumber) => Right(dynamicValueFromJson(Json.fromJsonNumber(number))),
+      )
       .annotate(directDynamicMapping())
 
   private def toJson(dv: DynamicValue): Json = dv match {
@@ -58,7 +66,7 @@ package object jsoniter {
         case StandardType.ZonedDateTimeType => CirceCodecs.zonedDateTimeC3C(value.asInstanceOf[java.time.ZonedDateTime])
         case StandardType.CurrencyType      => Json.fromString(value.asInstanceOf[java.util.Currency].toString)
       }
-    case other                                       => circe.toJson(other)
+    case other                                       => dynamicValueToJson(other)
   }
 
   private[circe] def toJsonNumber(dv: DynamicValue): Either[String, JsonNumber] = {

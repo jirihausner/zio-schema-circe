@@ -252,7 +252,7 @@ protected[circe] object Data {
     implicit val schema: Schema[Enumeration3] = DeriveSchema.gen[Enumeration3]
   }
 
-  sealed trait Color
+  sealed trait Color extends Product with Serializable
 
   object Color {
     case object Red extends Color

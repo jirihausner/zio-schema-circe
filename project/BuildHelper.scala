@@ -81,7 +81,7 @@ object BuildHelper {
       case Some((3, _))  =>
         Seq(
           "-Xignore-scala2-macros",
-          "-Xkind-projector",
+          "-Ykind-projector",
         )
       case Some((2, 13)) =>
         Seq(
@@ -93,15 +93,16 @@ object BuildHelper {
         ) ++ std2xOptions ++ optimizerOptions
       case Some((2, 12)) =>
         Seq(
-          "-Ypartial-unification",
           "-opt-warnings",
-          "-Ywarn-extra-implicit",
           "-Yno-adapted-args",
+          "-Ypartial-unification",
+          "-Ywarn-extra-implicit",
           "-Ywarn-inaccessible",
           "-Ywarn-nullary-override",
           "-Ywarn-nullary-unit",
-          "-Wconf:cat=unused-nowarn:s",
+          "-Ywarn-unused-import",
           "-Wconf:cat=deprecation:silent",
+          "-Wconf:cat=unused-nowarn:s",
         ) ++ std2xOptions ++ optimizerOptions
       case _             => Seq.empty
     }
@@ -231,12 +232,7 @@ object BuildHelper {
         BinCompatVersionToCompare match {
           case Some(version) => Set(organization.value %% name.value % version)
           case None          =>
-            previousStableVersion.value.flatMap { stableVersion =>
-              val current  = version.value.takeWhile(_ != '.')
-              val previous = stableVersion.takeWhile(_ != '.')
-              if (current == previous) Some(organization.value %% name.value % stableVersion)
-              else None
-            }.toSet
+            Set.empty
         }
       },
       mimaReportSignatureProblems   := true,

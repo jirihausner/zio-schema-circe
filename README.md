@@ -15,8 +15,8 @@
 In order to use this library, we need to add one of the following lines in our `build.sbt` file:
 
 ```scala
-libraryDependencies += "io.github.jirihausner" %% "zio-schema-circe"          % "1.0.0"
-libraryDependencies += "io.github.jirihausner" %% "zio-schema-circe-jsoniter" % "1.0.0"
+libraryDependencies += "io.github.jirihausner" %% "zio-schema-circe"          % "0.4.0"
+libraryDependencies += "io.github.jirihausner" %% "zio-schema-circe-jsoniter" % "0.4.0"
 ```
 
 `zio-schema-circe-jsoniter` uses [plokhotnyuk's jsoniter-scala Circe booster](https://github.com/plokhotnyuk/jsoniter-scala/tree/master/jsoniter-scala-circe) under the hood.
@@ -55,7 +55,7 @@ schemaBasedBinaryCodec[Person] // zio.schema.codec.BinaryCodec[Person]
 
 // derive circe BinaryCodec from schema with custom configuration
 import zio.schema.NameFormat
-import zio.schema.codec.circe.Configuration
+import zio.schema.codec.circe.CirceCodec.Configuration
 
 val config = Configuration()
   .withEmptyCollectionsIgnored

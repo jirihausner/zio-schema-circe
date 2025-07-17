@@ -4,25 +4,30 @@ import io.circe._
 import zio._
 import zio.schema._
 import zio.schema.codec.DecodeError
+import zio.schema.codec.circe.CirceCodec.Configuration
+import zio.schema.codec.circe.ExplicitConfig
 import zio.schema.codec.circe.internal._
-import zio.schema.codec.circe.{Configuration, ExplicitConfig}
 import zio.test.TestAspect._
 import zio.test._
 
 object CirceCodecSpec extends ZIOSpecDefault with EncoderSpecs with DecoderSpecs with EncoderDecoderSpecs {
 
-  override protected def IgnoreEmptyCollectionsConfig: Configuration       =
+  type Config = Configuration
+
+  override protected def DefaultConfig: Config = Configuration.default
+
+  override protected def IgnoreEmptyCollectionsConfig: Config       =
     Configuration.default.withEmptyCollectionsIgnored.withNullValuesIgnored
-  override protected def KeepNullsAndEmptyColleciontsConfig: Configuration =
+  override protected def KeepNullsAndEmptyColleciontsConfig: Config =
     Configuration.default.copy(
       explicitEmptyCollections = ExplicitConfig(decoding = true),
       explicitNullValues = ExplicitConfig(decoding = true),
     )
-  override protected def StreamingConfig: Configuration                    =
+  override protected def StreamingConfig: Config                    =
     Configuration.default.copy(treatStreamsAsArrays = true)
 
-  override protected def BinaryCodec[A]: (Schema[A], Configuration) => codec.BinaryCodec[A] =
-    (schema: Schema[A], config: Configuration) => CirceCodec.schemaBasedBinaryCodec(config)(schema)
+  override protected def BinaryCodec[A]: (Schema[A], Config) => codec.BinaryCodec[A] =
+    (schema: Schema[A], config: Config) => CirceCodec.schemaBasedBinaryCodec(config)(schema)
 
   def circeASTSuite(implicit
     schemaJson: Schema[Json],
@@ -83,7 +88,7 @@ object CirceCodecSpec extends ZIOSpecDefault with EncoderSpecs with DecoderSpecs
           assertEncodes(schemaJson, Json.arr(), """[]""") &&
           assertDecodes(schemaJson, """[]""", Json.arr())
         },
-        test("encodes and decodes an array containing with null") {
+        test("encodes and decodes an array containing null") {
           assertEncodes(
             schemaJson,
             Json.arr(Json.Null),

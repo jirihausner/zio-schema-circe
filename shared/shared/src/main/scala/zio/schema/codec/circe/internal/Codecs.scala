@@ -5,7 +5,7 @@ import zio.Chunk
 import zio.prelude.NonEmptyMap
 import zio.schema._
 import zio.schema.annotation._
-import zio.schema.codec.circe.Configuration
+import zio.schema.codec.circe.internal.Configuration
 
 import java.time.temporal.Temporal
 import java.util
@@ -17,7 +17,8 @@ private[circe] object Codecs extends Codecs
 
 private[circe] trait Codecs {
 
-  private val EmptyJsonObj: Json = Json.obj()
+  @inline
+  private def emptyJsonObj(): Json = Json.fromFields(Iterable.empty)
 
   type DiscriminatorTuple = Option[(String, String)]
 
@@ -282,12 +283,15 @@ private[circe] trait Codecs {
     case _                 => throw new Exception(s"Missing a handler for decoding of schema ${schema.toString()}.")
   }
 
-  def encodeField[B](schema: Schema[B]): Option[KeyEncoder[B]] = schema match {
+  def encodeField[B](schema: Schema[B], config: Configuration): Option[KeyEncoder[B]] = schema match {
     case Schema.Primitive(StandardType.StringType, _) => Some(KeyEncoder.encodeKeyString)
     case Schema.Primitive(StandardType.LongType, _)   => Some(KeyEncoder.encodeKeyLong)
     case Schema.Primitive(StandardType.IntType, _)    => Some(KeyEncoder.encodeKeyInt)
-    case Schema.Transform(c, _, g, a, _)              =>
-      encodeField(a.foldLeft(c)((s, a) => s.annotate(a))).map { encoder =>
+    case Schema.Primitive(StandardType.UUIDType, _)   => Some(KeyEncoder.encodeKeyUUID)
+    case schema: Schema.Enum[_] if schema.annotations.exists(_.isInstanceOf[simpleEnum]) =>
+      Some(KeyEncoder.encodeKeyString.contramap(caseMap(schema, config)))
+    case Schema.Transform(c, _, g, a, _)                                                 =>
+      encodeField(a.foldLeft(c)((s, a) => s.annotate(a)), config).map { encoder =>
         new KeyEncoder[B] {
           override def apply(b: B): String = g(b) match {
             case Left(reason) => throw new RuntimeException(s"Failed to encode field $b: $reason")
@@ -295,16 +299,30 @@ private[circe] trait Codecs {
           }
         }
       }
-    case Schema.Lazy(inner)                           => encodeField(inner())
-    case _                                            => None
+    case Schema.Lazy(inner)                                                              => encodeField(inner(), config)
+    case _                                                                               => None
   }
 
-  def decodeField[A](schema: Schema[A]): Option[KeyDecoder[A]] = schema match {
+  def decodeField[A](schema: Schema[A], config: Configuration): Option[KeyDecoder[A]] = schema match {
     case Schema.Primitive(StandardType.StringType, _) => Some(KeyDecoder.decodeKeyString)
     case Schema.Primitive(StandardType.LongType, _)   => Some(KeyDecoder.decodeKeyLong)
     case Schema.Primitive(StandardType.IntType, _)    => Some(KeyDecoder.decodeKeyInt)
-    case Schema.Transform(c, f, _, a, _)              =>
-      decodeField(a.foldLeft(c)((s, a) => s.annotate(a))).map { decoder =>
+    case Schema.Primitive(StandardType.UUIDType, _)   => Some(KeyDecoder.decodeKeyUUID)
+    case schema: Schema.Enum[_] if schema.annotations.exists(_.isInstanceOf[simpleEnum]) =>
+      Some {
+        val caseNameAliases = Codecs.caseNameAliases(schema, config)
+
+        new KeyDecoder[A] {
+          val cases = new util.HashMap[String, A](caseNameAliases.size << 1)
+          caseNameAliases.foreach { case (name, case_) =>
+            cases.put(format(name, config), case_.schema.asInstanceOf[Schema.CaseClass0[A]].defaultConstruct())
+          }
+
+          def apply(key: String): Option[A] = Option(cases.get(key))
+        }
+      }
+    case Schema.Transform(c, f, _, a, _)                                                 =>
+      decodeField(a.foldLeft(c)((s, a) => s.annotate(a)), config).map { decoder =>
         decoder.map { key =>
           f(key) match {
             case Left(reason) => throw new RuntimeException(s"Failed to decode field $a: $reason")
@@ -312,15 +330,15 @@ private[circe] trait Codecs {
           }
         }
       }
-    case Schema.Lazy(inner)                           => decodeField(inner())
-    case _                                            => None
+    case Schema.Lazy(inner)                                                              => decodeField(inner(), config)
+    case _                                                                               => None
   }
 
   def encodeMap[K, V](
     ks: Schema[K],
     vs: Schema[V],
     config: Configuration,
-  ): Encoder[Map[K, V]] = encodeField(ks) match {
+  ): Encoder[Map[K, V]] = encodeField(ks, config) match {
     case Some(keyEncoder) => Encoder.encodeMap(keyEncoder, encodeSchema(vs, config))
     case None             =>
       encodeChunk(Encoder.encodeTuple2(encodeSchema(ks, config), encodeSchema(vs, config)))
@@ -331,7 +349,7 @@ private[circe] trait Codecs {
     ks: Schema[K],
     vs: Schema[V],
     config: Configuration,
-  ): Decoder[Map[K, V]] = decodeField(ks) match {
+  ): Decoder[Map[K, V]] = decodeField(ks, config) match {
     case Some(keyDecoder) => Decoder.decodeMap(keyDecoder, decodeSchema(vs, config))
     case None             =>
       decodeChunk(Decoder.decodeTuple2(decodeSchema(ks, config), decodeSchema(vs, config)))
@@ -379,7 +397,7 @@ private[circe] trait Codecs {
             }
             Json.arr(maybeValues.flatten: _*)
           case DynamicValue.Primitive(value, standardType) => encodePrimitive(standardType)(value)
-          case DynamicValue.Singleton(_)                   => EmptyJsonObj
+          case DynamicValue.Singleton(_)                   => emptyJsonObj()
           case DynamicValue.SomeValue(value)               => encoder(value)
           case DynamicValue.NoneValue                      => Json.Null
           case DynamicValue.Tuple(_, _)                    =>
@@ -405,7 +423,7 @@ private[circe] trait Codecs {
       case _                      => false
     }
 
-    if (directMapping) Decoder.decodeJson.map(zio.schema.codec.circe.fromJson)
+    if (directMapping) Decoder.decodeJson.map(dynamicValueFromJson)
     else decodeSchema(DynamicValue.schema, config)
   }
 
@@ -421,20 +439,32 @@ private[circe] trait Codecs {
     }
   }
 
+  private def format(caseName: String, config: Configuration): String =
+    if (config.discriminatorFormat == NameFormat.Identity) caseName
+    else config.discriminatorFormat(caseName)
+
+  protected def caseNameAliases[Z](parentSchema: Schema.Enum[Z], config: Configuration) = {
+    val caseNameAliases = new mutable.HashMap[String, Schema.Case[Z, Any]]
+    parentSchema.cases.foreach { case_ =>
+      val schema = case_.asInstanceOf[Schema.Case[Z, Any]]
+      caseNameAliases.put(format(case_.caseName, config), schema)
+      case_.caseNameAliases.foreach(a => caseNameAliases.put(a, schema))
+    }
+    caseNameAliases
+  }
+
+  private def caseMap[Z](schema: Schema.Enum[Z], config: Configuration): Map[Z, String] =
+    schema.nonTransientCases
+      .map(case_ =>
+        case_.schema.asInstanceOf[Schema.CaseClass0[Z]].defaultConstruct() ->
+          format(case_.caseName, config),
+      )
+      .toMap
+
   def encodeEnum[Z](schema: Schema.Enum[Z], config: Configuration): Encoder[Z] = {
-
-    def format(caseName: String): String =
-      if (config.discriminatorFormat == NameFormat.Identity) caseName
-      else config.discriminatorFormat(caseName)
-
     // if all cases are CaseClass0, encode as a String
     if (schema.annotations.exists(_.isInstanceOf[simpleEnum])) {
-      Encoder.encodeString.contramap {
-        schema.nonTransientCases.map { case_ =>
-          case_.schema.asInstanceOf[Schema.CaseClass0[Z]].defaultConstruct() ->
-            format(case_.caseName)
-        }.toMap
-      }
+      Encoder.encodeString.contramap(caseMap(schema, config))
     } else {
       new Encoder[Z] {
 
@@ -442,8 +472,9 @@ private[circe] trait Codecs {
           if (schema.noDiscriminator || (config.noDiscriminator && schema.discriminatorName.isEmpty)) None
           else schema.discriminatorName.orElse(config.discriminatorName)
         val cases                = schema.nonTransientCases.toArray
+        val encodedKeys          = cases.map { case_ => format(case_.caseName, config) }
         val encoders             = cases.map { case_ =>
-          val discriminatorTuple = discriminatorName.map(_ -> format(case_.caseName))
+          val discriminatorTuple = discriminatorName.map(_ -> format(case_.caseName, config))
           encodeSchema(case_.schema.asInstanceOf[Schema[Any]], config, discriminatorTuple)
         }
         val doJsonObjectWrapping =
@@ -456,13 +487,13 @@ private[circe] trait Codecs {
             if (case_.isCase(value)) {
               val result = encoders(i)(case_.deconstruct(value))
               return {
-                if (doJsonObjectWrapping) Json.obj(format(case_.caseName) -> result)
+                if (doJsonObjectWrapping) Json.obj(encodedKeys(i) -> result)
                 else result
               }
             }
             i += 1
           }
-          EmptyJsonObj // for transient cases
+          emptyJsonObj() // for transient cases
         }
       }
     }
@@ -470,23 +501,15 @@ private[circe] trait Codecs {
 
   def decodeEnum[Z](parentSchema: Schema.Enum[Z], config: Configuration): Decoder[Z] = {
 
-    def format(caseName: String): String =
-      if (config.discriminatorFormat == NameFormat.Identity) caseName
-      else config.discriminatorFormat(caseName)
-
-    val caseNameAliases = new mutable.HashMap[String, Schema.Case[Z, Any]]
-    parentSchema.cases.foreach { case_ =>
-      val schema = case_.asInstanceOf[Schema.Case[Z, Any]]
-      caseNameAliases.put(format(schema.caseName), schema)
-      schema.caseNameAliases.foreach { alias => caseNameAliases.put(alias, schema) }
-    }
+    val caseNameAliases: mutable.HashMap[String, Schema.Case[Z, Any]] =
+      Codecs.caseNameAliases(parentSchema, config)
 
     if (parentSchema.cases.forall(_.schema.isInstanceOf[Schema.CaseClass0[_]])) { // if all cases are CaseClass0, decode as String
       new Decoder[Z] {
 
         val cases = new util.HashMap[String, Z](caseNameAliases.size << 1)
         caseNameAliases.foreach { case (name, case_) =>
-          cases.put(format(name), case_.schema.asInstanceOf[Schema.CaseClass0[Z]].defaultConstruct())
+          cases.put(format(name, config), case_.schema.asInstanceOf[Schema.CaseClass0[Z]].defaultConstruct())
         }
 
         override def apply(c: HCursor): Decoder.Result[Z] = {
@@ -522,7 +545,7 @@ private[circe] trait Codecs {
 
             val cases = new util.HashMap[String, Decoder[Any]](caseNameAliases.size << 1)
             caseNameAliases.foreach { case (name, case_) =>
-              cases.put(format(name), decodeSchema(case_.schema, config, discriminator))
+              cases.put(format(name, config), decodeSchema(case_.schema, config, discriminator))
             }
 
             override def apply(c: HCursor): Decoder.Result[Z] = {
@@ -542,7 +565,7 @@ private[circe] trait Codecs {
 
             val cases = new util.HashMap[String, Decoder[Any]](caseNameAliases.size << 1)
             caseNameAliases.foreach { case (name, case_) =>
-              cases.put(format(name), decodeSchema(case_.schema, config, discriminator))
+              cases.put(format(name, config), decodeSchema(case_.schema, config, discriminator))
             }
 
             override def apply(c: HCursor): Decoder.Result[Z] = {
@@ -627,7 +650,7 @@ private[circe] trait Codecs {
       new Encoder[ListMap[String, _]] {
 
         val result = discriminator match {
-          case None        => EmptyJsonObj
+          case None        => emptyJsonObj()
           case Some(tuple) => Json.obj(tuple)
         }
 

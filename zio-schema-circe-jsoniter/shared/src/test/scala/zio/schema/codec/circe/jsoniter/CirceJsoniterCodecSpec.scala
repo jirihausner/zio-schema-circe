@@ -6,23 +6,28 @@ import zio.durationInt
 import zio.schema._
 import zio.schema.codec.circe._
 import zio.schema.codec.circe.internal._
+import zio.schema.codec.circe.jsoniter.CirceJsoniterCodec.Configuration
 import zio.test.TestAspect._
 import zio.test._
 
 object CirceJsoniterCodecSpec extends ZIOSpecDefault with EncoderSpecs with DecoderSpecs with EncoderDecoderSpecs {
 
-  override protected def IgnoreEmptyCollectionsConfig: Configuration       =
+  type Config = Configuration
+
+  override protected def DefaultConfig: Config = Configuration.default
+
+  override protected def IgnoreEmptyCollectionsConfig: Config       =
     Configuration.default.withEmptyCollectionsIgnored.withNullValuesIgnored
-  override protected def KeepNullsAndEmptyColleciontsConfig: Configuration =
+  override protected def KeepNullsAndEmptyColleciontsConfig: Config =
     Configuration.default.copy(
       explicitEmptyCollections = ExplicitConfig(decoding = true),
       explicitNullValues = ExplicitConfig(decoding = true),
     )
-  override protected def StreamingConfig: Configuration                    =
+  override protected def StreamingConfig: Config                    =
     Configuration.default.copy(treatStreamsAsArrays = true)
 
-  override protected def BinaryCodec[A]: (Schema[A], Configuration) => codec.BinaryCodec[A] =
-    (schema: Schema[A], config: Configuration) => CirceJsoniterCodec.schemaBasedBinaryCodec(config)(schema)
+  override protected def BinaryCodec[A]: (Schema[A], Config) => codec.BinaryCodec[A] =
+    (schema: Schema[A], config: Config) => CirceJsoniterCodec.schemaBasedBinaryCodec(config)(schema)
 
   import zio.schema.codec.circe.jsoniter.{schemaJson, schemaJsonObject, schemaJsonNumber}
 

@@ -1,7 +1,6 @@
 import BuildHelper._
 import com.typesafe.tools.mima.core._
 import com.typesafe.tools.mima.plugin.MimaKeys.mimaPreviousArtifacts
-import xerial.sbt.Sonatype.sonatypeCentralHost
 
 inThisBuild(
   List(
@@ -21,9 +20,6 @@ inThisBuild(
     ),
   ),
 )
-
-ThisBuild / sonatypeCredentialHost := sonatypeCentralHost
-sonatypeRepository                 := "https://s01.oss.sonatype.org/service/local"
 
 Global / onChangedBuildSource := ReloadOnSourceChanges
 
@@ -59,10 +55,10 @@ lazy val root = project
 
 lazy val shared =
   crossProject(JSPlatform, JVMPlatform, NativePlatform)
+    .crossType(CrossType.Full)
     .in(file("shared"))
     .settings(
-      publish / skip        := true,
-      mimaPreviousArtifacts := Set.empty,
+      publish / skip := true,
       mimaBinaryIssueFilters ++= Seq(
         ProblemFilters.exclude[Problem]("zio.schema.codec.circe.internal.*"),
       ),
@@ -98,6 +94,7 @@ lazy val shared =
 
 lazy val zioSchemaCirce =
   crossProject(JSPlatform, JVMPlatform, NativePlatform)
+    .crossType(CrossType.Full)
     .in(file("zio-schema-circe"))
     .enablePlugins(BuildInfoPlugin)
     .settings(stdSettings("zio-schema-circe"))
@@ -113,6 +110,11 @@ lazy val zioSchemaCirce =
         "dev.zio"  %%% "zio-schema-zio-test"   % Versions.zioSchema % Test,
       ),
     )
+    .settings(
+      mimaBinaryIssueFilters ++= Seq(
+        ProblemFilters.exclude[Problem]("zio.schema.codec.circe.internal.*"),
+      ),
+    )
     .settings(macroDefinitionSettings)
     .settings(crossProjectSettings)
     .settings(Test / fork := crossProjectPlatform.value == JVMPlatform)
@@ -124,6 +126,7 @@ lazy val zioSchemaCirce =
 
 lazy val zioSchemaCirceJsoniter =
   crossProject(JSPlatform, JVMPlatform, NativePlatform)
+    .crossType(CrossType.Full)
     .in(file("zio-schema-circe-jsoniter"))
     .enablePlugins(BuildInfoPlugin)
     .settings(stdSettings("zio-schema-circe-jsoniter"))
@@ -131,6 +134,11 @@ lazy val zioSchemaCirceJsoniter =
     .settings(dottySettings)
     .settings(
       libraryDependencies += "com.github.plokhotnyuk.jsoniter-scala" %%% "jsoniter-scala-circe" % Versions.jsoniter,
+    )
+    .settings(
+      mimaBinaryIssueFilters ++= Seq(
+        ProblemFilters.exclude[Problem]("zio.schema.codec.circe.jsoniter.internal.*"),
+      ),
     )
     .settings(macroDefinitionSettings)
     .settings(crossProjectSettings)
