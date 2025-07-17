@@ -113,6 +113,7 @@ lazy val zioSchemaCirce =
     .settings(
       mimaBinaryIssueFilters ++= Seq(
         ProblemFilters.exclude[Problem]("zio.schema.codec.circe.internal.*"),
+        ProblemFilters.exclude[DirectMissingMethodProblem]("zio.schema.codec.circe.CirceCodec.schemaDecoder"),
       ),
     )
     .settings(macroDefinitionSettings)
@@ -138,6 +139,24 @@ lazy val zioSchemaCirceJsoniter =
     .settings(
       mimaBinaryIssueFilters ++= Seq(
         ProblemFilters.exclude[Problem]("zio.schema.codec.circe.jsoniter.internal.*"),
+        ProblemFilters.exclude[IncompatibleResultTypeProblem](
+          "zio.schema.codec.circe.jsoniter.CirceJsoniterCodec.schemaEncoder$default$2",
+        ),
+        ProblemFilters.exclude[IncompatibleMethTypeProblem](
+          "zio.schema.codec.circe.jsoniter.CirceJsoniterCodec.schemaEncoder",
+        ),
+        ProblemFilters.exclude[IncompatibleMethTypeProblem](
+          "zio.schema.codec.circe.jsoniter.CirceJsoniterCodec.schemaBasedBinaryCodec",
+        ),
+        ProblemFilters.exclude[IncompatibleMethTypeProblem](
+          "zio.schema.codec.circe.jsoniter.CirceJsoniterCodec#CirceJsoniterEncoder.encode",
+        ),
+        ProblemFilters.exclude[DirectMissingMethodProblem](
+          "zio.schema.codec.circe.jsoniter.CirceJsoniterCodec.schemaDecoder",
+        ),
+        ProblemFilters.exclude[DirectMissingMethodProblem](
+          "zio.schema.codec.circe.jsoniter.CirceJsoniterCodec.schemaCodec",
+        ),
       ),
     )
     .settings(macroDefinitionSettings)

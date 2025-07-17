@@ -29,7 +29,7 @@ object BuildHelper {
   val Scala213: String = versions("2.13")
   val Scala3: String   = versions("3.3")
 
-  val BinCompatVersionToCompare: Option[String] = None
+  val BinCompatVersionToCompare: Option[String] = Some("0.3.2")
 
   object Versions {
 
