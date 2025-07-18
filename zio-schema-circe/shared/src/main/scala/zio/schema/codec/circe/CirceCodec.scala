@@ -113,7 +113,7 @@ object CirceCodec {
 
     @inline
     implicit def schemaCodec[A](implicit schema: Schema[A], config: Configuration): Codec[A] =
-      Codec.from(Codecs.decodeSchema(schema, config), Codecs.encodeSchema(schema, config))
+      CirceCodec.schemaCodec(config)(schema)
   }
 
   @deprecated("Use CirceCodec.implicits.circeBinaryCodec instead", "0.4.0")
@@ -228,7 +228,7 @@ object CirceCodec {
   }
 
   @inline
-  def schemaDecoder[A](schema: Schema[A]): Decoder[A] = schemaDecoder(schema)
+  def schemaDecoder[A](schema: Schema[A]): Decoder[A] = schemaDecoder(Configuration.default)(schema)
 
   @inline
   def schemaDecoder[A](config: Configuration)(schema: Schema[A]): Decoder[A] =

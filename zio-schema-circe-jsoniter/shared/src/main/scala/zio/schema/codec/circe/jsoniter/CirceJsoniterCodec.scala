@@ -117,7 +117,7 @@ object CirceJsoniterCodec {
 
     @inline
     implicit def schemaCodec[A](implicit schema: Schema[A], config: Configuration): Codec[A] =
-      Codec.from(Codecs.decodeSchema(schema, config), Codecs.encodeSchema(schema, config))
+      CirceJsoniterCodec.schemaCodec(config)(schema)
   }
 
   @deprecated("Use CirceJsoniterCodec.implicits.circeJsoniterBinaryCodec instead", "0.4.0")
@@ -235,7 +235,7 @@ object CirceJsoniterCodec {
   }
 
   @inline
-  def schemaDecoder[A](schema: Schema[A]): Decoder[A] = schemaDecoder(schema)
+  def schemaDecoder[A](schema: Schema[A]): Decoder[A] = schemaDecoder(Configuration.default)(schema)
 
   @inline
   def schemaDecoder[A](config: Configuration)(schema: Schema[A]): Decoder[A] =
