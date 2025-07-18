@@ -13,9 +13,9 @@ object VersionSpecificCirceJsoniterCodecSpec extends VersionSpecificCodecSpec {
   implicit val config: Configuration = Configuration.default
 
   override protected def schemaEncoder[A: Schema]: Encoder[A] =
-    CirceJsoniterCodec.schemaEncoder(Schema[A])(using config)
+    CirceJsoniterCodec.schemaEncoder(config)(Schema[A])
   override protected def schemaDecoder[A: Schema]: Decoder[A] =
-    CirceJsoniterCodec.schemaDecoder(Schema[A])(using config)
+    CirceJsoniterCodec.schemaDecoder(config)(Schema[A])
 
   def spec: Spec[TestEnvironment, Any] =
     suite("VersionSpecificCirceJsoniterCodecSpec")(
