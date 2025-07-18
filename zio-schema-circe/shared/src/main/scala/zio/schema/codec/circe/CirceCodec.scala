@@ -7,7 +7,6 @@ import zio.schema.codec.{BinaryCodec, DecodeError}
 import zio.stream.ZPipeline
 import zio.{Cause, Chunk}
 
-import java.nio.CharBuffer
 import java.nio.charset.StandardCharsets
 
 object CirceCodec {
@@ -118,8 +117,11 @@ object CirceCodec {
   }
 
   @deprecated("Use CirceCodec.implicits.circeBinaryCodec instead", "0.4.0")
-  implicit def circeBinaryCodec[A](implicit codec: Encoder[A] with Decoder[A]): BinaryCodec[A] =
+  implicit def circeBinaryCodec[A](codec: Encoder[A] with Decoder[A]): BinaryCodec[A] = {
+    implicit val encoder: Encoder[A] = codec
+    implicit val decoder: Decoder[A] = codec
     circeBinaryCodec(Configuration.default)
+  }
 
   @inline
   def circeBinaryCodec[A](implicit encoder: Encoder[A], decoder: Decoder[A]): BinaryCodec[A] =
@@ -210,15 +212,12 @@ object CirceCodec {
     Codecs.encodeSchema(schema, config.toConfiguration)
 
   @inline
-  def schemaEncoder[A](schema: Schema[A])(implicit config: Configuration): Encoder[A] =
+  def schemaEncoder[A](config: Configuration)(schema: Schema[A]): Encoder[A] =
     Codecs.encodeSchema(schema, config)
 
   object CirceEncoder {
 
-    private[circe] def charSequenceToByteChunk(chars: CharSequence): Chunk[Byte] = {
-      val bytes = StandardCharsets.UTF_8.newEncoder().encode(CharBuffer.wrap(chars))
-      Chunk.fromByteBuffer(bytes)
-    }
+    import zio.schema.codec.circe.internal.charSequenceToByteChunk
 
     @deprecated("Use Configuration based method instead", "0.4.0")
     final def encode[A](schema: Schema[A], value: A, config: Config): Chunk[Byte] =
@@ -229,7 +228,10 @@ object CirceCodec {
   }
 
   @inline
-  def schemaDecoder[A](schema: Schema[A])(implicit config: Configuration = Configuration.default): Decoder[A] =
+  def schemaDecoder[A](schema: Schema[A]): Decoder[A] = schemaDecoder(schema)
+
+  @inline
+  def schemaDecoder[A](config: Configuration)(schema: Schema[A]): Decoder[A] =
     Codecs.decodeSchema(schema, config)
 
   object CirceDecoder {
@@ -255,6 +257,6 @@ object CirceCodec {
   }
 
   @inline
-  def schemaCodec[A](schema: Schema[A])(implicit config: Configuration): Codec[A] =
+  def schemaCodec[A](config: Configuration)(schema: Schema[A]): Codec[A] =
     Codec.from(Codecs.decodeSchema(schema, config), Codecs.encodeSchema(schema, config))
 }

@@ -45,6 +45,9 @@ lazy val root = project
     mimaPreviousArtifacts := Set.empty,
   )
   .aggregate(
+    core.jvm,
+    core.js,
+    core.native,
     zioSchemaCirce.jvm,
     zioSchemaCirce.js,
     zioSchemaCirce.native,
@@ -53,17 +56,12 @@ lazy val root = project
     zioSchemaCirceJsoniter.native,
   )
 
-lazy val shared =
+lazy val core =
   crossProject(JSPlatform, JVMPlatform, NativePlatform)
-    .crossType(CrossType.Full)
-    .in(file("shared"))
-    .settings(
-      publish / skip := true,
-      mimaBinaryIssueFilters ++= Seq(
-        ProblemFilters.exclude[Problem]("zio.schema.codec.circe.internal.*"),
-      ),
-    )
-    .settings(stdSettings("shared"))
+    .in(file("core"))
+    .enablePlugins(BuildInfoPlugin)
+    .settings(stdSettings("zio-schema-circe-core"))
+    .settings(buildInfoSettings("zio.schema.codec.circe"))
     .settings(dottySettings)
     .settings(
       libraryDependencies ++= Seq(
@@ -71,6 +69,12 @@ lazy val shared =
         "dev.zio"  %%% "zio"         % Versions.zio,
         "dev.zio"  %%% "zio-streams" % Versions.zio,
         "dev.zio"  %%% "zio-schema"  % Versions.zioSchema,
+      ),
+    )
+    .settings(
+      mimaPreviousArtifacts := Set.empty,
+      mimaBinaryIssueFilters ++= Seq(
+        ProblemFilters.exclude[Problem]("zio.schema.codec.circe.internal.*"),
       ),
     )
     .settings(macroDefinitionSettings)
@@ -94,7 +98,6 @@ lazy val shared =
 
 lazy val zioSchemaCirce =
   crossProject(JSPlatform, JVMPlatform, NativePlatform)
-    .crossType(CrossType.Full)
     .in(file("zio-schema-circe"))
     .enablePlugins(BuildInfoPlugin)
     .settings(stdSettings("zio-schema-circe"))
@@ -114,6 +117,8 @@ lazy val zioSchemaCirce =
       mimaBinaryIssueFilters ++= Seq(
         ProblemFilters.exclude[Problem]("zio.schema.codec.circe.internal.*"),
         // internal api changes
+        ProblemFilters.exclude[MissingClassProblem]("zio.schema.codec.circe.package"),
+        ProblemFilters.exclude[MissingClassProblem]("zio.schema.codec.circe.package$"),
         ProblemFilters.exclude[DirectMissingMethodProblem]("zio.schema.codec.circe.package.folder"),
         ProblemFilters.exclude[DirectMissingMethodProblem]("zio.schema.codec.circe.package.fromJson"),
         ProblemFilters.exclude[DirectMissingMethodProblem]("zio.schema.codec.circe.package.toJson"),
@@ -130,11 +135,10 @@ lazy val zioSchemaCirce =
       scalaJSLinkerConfig ~= { _.withOptimizer(false) },
       scalaJSUseMainModuleInitializer := true,
     )
-    .dependsOn(shared)
+    .dependsOn(core)
 
 lazy val zioSchemaCirceJsoniter =
   crossProject(JSPlatform, JVMPlatform, NativePlatform)
-    .crossType(CrossType.Full)
     .in(file("zio-schema-circe-jsoniter"))
     .enablePlugins(BuildInfoPlugin)
     .settings(stdSettings("zio-schema-circe-jsoniter"))
@@ -146,6 +150,9 @@ lazy val zioSchemaCirceJsoniter =
     .settings(
       mimaBinaryIssueFilters ++= Seq(
         ProblemFilters.exclude[Problem]("zio.schema.codec.circe.jsoniter.internal.*"),
+        // deprecation of jsoniter based Schema[Json]
+        ProblemFilters.exclude[MissingClassProblem]("zio.schema.codec.circe.jsoniter.package"),
+        ProblemFilters.exclude[MissingClassProblem]("zio.schema.codec.circe.jsoniter.package$"),
         // caused by adding CirceJsoniterCodec.Config and CirceJsoniterCodec.Configuration
         ProblemFilters.exclude[IncompatibleResultTypeProblem](
           "zio.schema.codec.circe.jsoniter.CirceJsoniterCodec.schemaEncoder$default$2",
@@ -174,4 +181,4 @@ lazy val zioSchemaCirceJsoniter =
       scalaJSLinkerConfig ~= { _.withOptimizer(false) },
       scalaJSUseMainModuleInitializer := true,
     )
-    .dependsOn(shared, zioSchemaCirce % "test->test")
+    .dependsOn(core, zioSchemaCirce % "test->test")

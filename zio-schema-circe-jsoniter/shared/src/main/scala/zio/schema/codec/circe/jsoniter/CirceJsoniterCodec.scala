@@ -121,8 +121,11 @@ object CirceJsoniterCodec {
   }
 
   @deprecated("Use CirceJsoniterCodec.implicits.circeJsoniterBinaryCodec instead", "0.4.0")
-  implicit def circeJsoniterBinaryCodec[A](implicit codec: Encoder[A] with Decoder[A]): BinaryCodec[A] =
+  implicit def circeJsoniterBinaryCodec[A](codec: Encoder[A] with Decoder[A]): BinaryCodec[A] = {
+    implicit val encoder: Encoder[A] = codec
+    implicit val decoder: Decoder[A] = codec
     circeJsoniterBinaryCodec(Configuration.default)
+  }
 
   @inline
   def circeJsoniterBinaryCodec[A](implicit encoder: Encoder[A], decoder: Decoder[A]): BinaryCodec[A] =
@@ -218,7 +221,7 @@ object CirceJsoniterCodec {
     Codecs.encodeSchema(schema, config.toConfiguration)
 
   @inline
-  def schemaEncoder[A](schema: Schema[A])(implicit config: Configuration): Encoder[A] =
+  def schemaEncoder[A](config: Configuration)(schema: Schema[A]): Encoder[A] =
     Codecs.encodeSchema(schema, config)
 
   object CirceJsoniterEncoder {
@@ -232,7 +235,10 @@ object CirceJsoniterCodec {
   }
 
   @inline
-  def schemaDecoder[A](schema: Schema[A])(implicit config: Configuration = Configuration.default): Decoder[A] =
+  def schemaDecoder[A](schema: Schema[A]): Decoder[A] = schemaDecoder(schema)
+
+  @inline
+  def schemaDecoder[A](config: Configuration)(schema: Schema[A]): Decoder[A] =
     Codecs.decodeSchema(schema, config)
 
   object CirceJsoniterDecoder {
@@ -258,6 +264,6 @@ object CirceJsoniterCodec {
   }
 
   @inline
-  def schemaCodec[A](schema: Schema[A])(implicit config: Configuration): Codec[A] =
+  def schemaCodec[A](config: Configuration)(schema: Schema[A]): Codec[A] =
     Codec.from(Codecs.decodeSchema(schema, config), Codecs.encodeSchema(schema, config))
 }

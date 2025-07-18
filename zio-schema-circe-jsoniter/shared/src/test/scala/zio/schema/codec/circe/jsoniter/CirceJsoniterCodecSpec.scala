@@ -29,8 +29,6 @@ object CirceJsoniterCodecSpec extends ZIOSpecDefault with EncoderSpecs with Deco
   override protected def BinaryCodec[A]: (Schema[A], Config) => codec.BinaryCodec[A] =
     (schema: Schema[A], config: Config) => CirceJsoniterCodec.schemaBasedBinaryCodec(config)(schema)
 
-  import zio.schema.codec.circe.jsoniter.{schemaJson, schemaJsonObject, schemaJsonNumber}
-
   /**
    * Workaround for inconsistency between circe and jsoniter in handling Unicode
    * escaping (e.g. "\u001E" vs "\u001e").

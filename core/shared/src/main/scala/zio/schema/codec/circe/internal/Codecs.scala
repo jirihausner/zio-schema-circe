@@ -422,7 +422,7 @@ private[circe] trait Codecs {
       case _                      => false
     }
 
-    if (directMapping) Decoder.decodeJson.map(dynamicValueFromJson)
+    if (directMapping) Decoder.decodeJson.map(zio.schema.codec.circe.fromJson)
     else decodeSchema(DynamicValue.schema, config)
   }
 

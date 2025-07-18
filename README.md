@@ -36,24 +36,24 @@ object Person {
     implicit val schema: Schema[Person] = DeriveSchema.gen
 }
 
-// derive Circe codecs from Schema
+// derive circe's Codec[A] from Schema[A]
 implicit val codec: Codec[Person] = CirceCodec.schemaCodec(Person.schema)
 
 decode[Person]("""{"name": "John", "age": 30}""") // Person("John", 30)
 Person("Adam", 24).asJson.noSpaces                // {"Adam": 24}
 
-// use existing Circe codecs as BinaryCodec
+// use existing circe's Codec[A] as BinaryCodec[A]
 import io.circe.generic.semiauto.deriveCodec
 import zio.schema.codec.circe.CirceCodec.circeBinaryCodec
 
-circeBinaryCodec[Person](deriveCodec) // zio.schema.codec.BinaryCodec[Person]
+circeBinaryCodec[Person](deriveCodec[Person]) // zio.schema.codec.BinaryCodec[Person]
 
-// derive circe BinaryCodec from schema
+// derive BinaryCodec[A] from Schema[A]
 import zio.schema.codec.circe.CirceCodec.schemaBasedBinaryCodec
 
 schemaBasedBinaryCodec[Person] // zio.schema.codec.BinaryCodec[Person]
 
-// derive circe BinaryCodec from schema with custom configuration
+// derive BinaryCodec[A] from Schema[A] with custom configuration
 import zio.schema.NameFormat
 import zio.schema.codec.circe.CirceCodec.Configuration
 
