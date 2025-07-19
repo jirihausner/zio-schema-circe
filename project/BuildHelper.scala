@@ -33,12 +33,12 @@ object BuildHelper {
 
   object Versions {
 
-    val circe           = "0.14.13"
+    val circe           = "0.14.14"
     val circeDerivation = "0.13.0-M5"
-    val jsoniter        = "2.36.2"
+    val jsoniter        = "2.36.6"
     val scalaJavaTime   = "2.6.0"
-    val zio             = "2.1.18"
-    val zioSchema       = "1.7.2"
+    val zio             = "2.1.19"
+    val zioSchema       = "1.7.3"
   }
 
   def compilerOptions(scalaVersion: String, optimize: Boolean) = {
