@@ -1,7 +1,6 @@
 import BuildHelper._
+import com.typesafe.tools.mima.core._
 import com.typesafe.tools.mima.plugin.MimaKeys.mimaPreviousArtifacts
-
-lazy val binCompatVersionToCompare = Some("0.3.1")
 
 inThisBuild(
   List(
@@ -46,6 +45,9 @@ lazy val root = project
     mimaPreviousArtifacts := Set.empty,
   )
   .aggregate(
+    core.jvm,
+    core.js,
+    core.native,
     zioSchemaCirce.jvm,
     zioSchemaCirce.js,
     zioSchemaCirce.native,
@@ -54,26 +56,24 @@ lazy val root = project
     zioSchemaCirceJsoniter.native,
   )
 
-lazy val zioSchemaCirce =
+lazy val core =
   crossProject(JSPlatform, JVMPlatform, NativePlatform)
-    .in(file("zio-schema-circe"))
+    .in(file("core"))
     .enablePlugins(BuildInfoPlugin)
-    .settings(stdSettings("zio-schema-circe"))
+    .settings(stdSettings("zio-schema-circe-core"))
     .settings(buildInfoSettings("zio.schema.codec.circe"))
-    .settings(mimaSettings(binCompatVersionToCompare, failOnProblem = true))
     .settings(dottySettings)
     .settings(
       libraryDependencies ++= Seq(
-        "io.circe" %%% "circe-core"            % Versions.circe,
-        "io.circe" %%% "circe-generic"         % Versions.circe     % Test,
-        "io.circe" %%% "circe-parser"          % Versions.circe,
-        "dev.zio"  %%% "zio"                   % Versions.zio,
-        "dev.zio"  %%% "zio-test"              % Versions.zio       % Test,
-        "dev.zio"  %%% "zio-test-sbt"          % Versions.zio       % Test,
-        "dev.zio"  %%% "zio-streams"           % Versions.zio,
-        "dev.zio"  %%% "zio-schema"            % Versions.zioSchema,
-        "dev.zio"  %%% "zio-schema-derivation" % Versions.zioSchema % Test,
-        "dev.zio"  %%% "zio-schema-zio-test"   % Versions.zioSchema % Test,
+        "io.circe" %%% "circe-core"  % Versions.circe,
+        "dev.zio"  %%% "zio"         % Versions.zio,
+        "dev.zio"  %%% "zio-streams" % Versions.zio,
+        "dev.zio"  %%% "zio-schema"  % Versions.zioSchema,
+      ),
+    )
+    .settings(
+      mimaBinaryIssueFilters ++= Seq(
+        ProblemFilters.exclude[Problem]("zio.schema.codec.circe.internal.*"),
       ),
     )
     .settings(macroDefinitionSettings)
@@ -95,33 +95,57 @@ lazy val zioSchemaCirce =
       scalaJSUseMainModuleInitializer := true,
     )
 
+lazy val zioSchemaCirce =
+  crossProject(JSPlatform, JVMPlatform, NativePlatform)
+    .in(file("zio-schema-circe"))
+    .enablePlugins(BuildInfoPlugin)
+    .settings(stdSettings("zio-schema-circe"))
+    .settings(buildInfoSettings("zio.schema.codec.circe"))
+    .settings(dottySettings)
+    .settings(
+      libraryDependencies ++= Seq(
+        "io.circe" %%% "circe-generic"         % Versions.circe     % Test,
+        "io.circe" %%% "circe-parser"          % Versions.circe,
+        "dev.zio"  %%% "zio-test"              % Versions.zio       % Test,
+        "dev.zio"  %%% "zio-test-sbt"          % Versions.zio       % Test,
+        "dev.zio"  %%% "zio-schema-derivation" % Versions.zioSchema % Test,
+        "dev.zio"  %%% "zio-schema-zio-test"   % Versions.zioSchema % Test,
+      ),
+    )
+    .settings(
+      mimaBinaryIssueFilters ++= Seq(
+        ProblemFilters.exclude[Problem]("zio.schema.codec.circe.internal.*"),
+      ),
+    )
+    .settings(macroDefinitionSettings)
+    .settings(crossProjectSettings)
+    .settings(Test / fork := crossProjectPlatform.value == JVMPlatform)
+    .jsSettings(
+      scalaJSLinkerConfig ~= { _.withOptimizer(false) },
+      scalaJSUseMainModuleInitializer := true,
+    )
+    .dependsOn(core)
+
 lazy val zioSchemaCirceJsoniter =
   crossProject(JSPlatform, JVMPlatform, NativePlatform)
     .in(file("zio-schema-circe-jsoniter"))
     .enablePlugins(BuildInfoPlugin)
     .settings(stdSettings("zio-schema-circe-jsoniter"))
     .settings(buildInfoSettings("zio.schema.codec.circe.jsoniter"))
-    .settings(mimaSettings(binCompatVersionToCompare, failOnProblem = true))
     .settings(dottySettings)
     .settings(
       libraryDependencies += "com.github.plokhotnyuk.jsoniter-scala" %%% "jsoniter-scala-circe" % Versions.jsoniter,
     )
+    .settings(
+      mimaBinaryIssueFilters ++= Seq(
+        ProblemFilters.exclude[Problem]("zio.schema.codec.circe.jsoniter.internal.*"),
+      ),
+    )
     .settings(macroDefinitionSettings)
     .settings(crossProjectSettings)
     .settings(Test / fork := crossProjectPlatform.value == JVMPlatform)
-    .nativeSettings(
-      libraryDependencies ++= Seq(
-        "io.github.cquiroz" %%% "scala-java-time" % Versions.scalaJavaTime,
-      ),
-    )
-    .jsSettings(
-      libraryDependencies ++= Seq(
-        "io.github.cquiroz" %%% "scala-java-time"      % Versions.scalaJavaTime,
-        "io.github.cquiroz" %%% "scala-java-time-tzdb" % Versions.scalaJavaTime,
-      ),
-    )
     .jsSettings(
       scalaJSLinkerConfig ~= { _.withOptimizer(false) },
       scalaJSUseMainModuleInitializer := true,
     )
-    .dependsOn(zioSchemaCirce, zioSchemaCirce % "test->test")
+    .dependsOn(core, zioSchemaCirce % "test->test")

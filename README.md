@@ -15,8 +15,8 @@
 In order to use this library, we need to add one of the following lines in our `build.sbt` file:
 
 ```scala
-libraryDependencies += "io.github.jirihausner" %% "zio-schema-circe"          % "0.3.1"
-libraryDependencies += "io.github.jirihausner" %% "zio-schema-circe-jsoniter" % "0.3.1"
+libraryDependencies += "io.github.jirihausner" %% "zio-schema-circe"          % "0.4.0"
+libraryDependencies += "io.github.jirihausner" %% "zio-schema-circe-jsoniter" % "0.4.0"
 ```
 
 `zio-schema-circe-jsoniter` uses [plokhotnyuk's jsoniter-scala Circe booster](https://github.com/plokhotnyuk/jsoniter-scala/tree/master/jsoniter-scala-circe) under the hood.
@@ -36,22 +36,32 @@ object Person {
     implicit val schema: Schema[Person] = DeriveSchema.gen
 }
 
-// derive Circe codecs from Schema
+// derive circe's Codec[A] from Schema[A]
 implicit val codec: Codec[Person] = CirceCodec.schemaCodec(Person.schema)
 
 decode[Person]("""{"name": "John", "age": 30}""") // Person("John", 30)
 Person("Adam", 24).asJson.noSpaces                // {"Adam": 24}
 
-// use existing Circe codecs as BinaryCodec
+// use existing circe's Codec[A] as BinaryCodec[A]
 import io.circe.generic.semiauto.deriveCodec
 import zio.schema.codec.circe.CirceCodec.circeBinaryCodec
 
-circeBinaryCodec[Person](deriveCodec) // zio.schema.codec.BinaryCodec[Person]
+circeBinaryCodec[Person](deriveCodec[Person]) // zio.schema.codec.BinaryCodec[Person]
 
-// derive circe BinaryCodec from schema
+// derive BinaryCodec[A] from Schema[A]
 import zio.schema.codec.circe.CirceCodec.schemaBasedBinaryCodec
 
-schemaBasedBinaryCodec[Person](CirceCodec.Config.default) // zio.schema.codec.BinaryCodec[Person]
+schemaBasedBinaryCodec[Person] // zio.schema.codec.BinaryCodec[Person]
+
+// derive BinaryCodec[A] from Schema[A] with custom configuration
+import zio.schema.NameFormat
+import zio.schema.codec.circe.CirceCodec.Configuration
+
+val config = Configuration()
+  .withEmptyCollectionsIgnored
+  .withNullValuesIgnored
+  .withDiscriminator("type", format = NameFormat.SnakeCase)
+schemaBasedBinaryCodec[Person](config) // zio.schema.codec.BinaryCodec[Person]
 ```
 
 ## Acknowledgements

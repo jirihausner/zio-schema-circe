@@ -29,14 +29,16 @@ object BuildHelper {
   val Scala213: String = versions("2.13")
   val Scala3: String   = versions("3.3")
 
+  val BinCompatVersionToCompare: Option[String] = Some("0.4.0")
+
   object Versions {
 
-    val circe           = "0.14.10"
+    val circe           = "0.14.13"
     val circeDerivation = "0.13.0-M5"
-    val jsoniter        = "2.33.2"
+    val jsoniter        = "2.36.2"
     val scalaJavaTime   = "2.6.0"
     val zio             = "2.1.18"
-    val zioSchema       = "1.7.0"
+    val zioSchema       = "1.7.2"
   }
 
   def compilerOptions(scalaVersion: String, optimize: Boolean) = {
@@ -223,31 +225,16 @@ object BuildHelper {
       incOptions ~= (_.withLogRecompileOnMacro(true)),
       autoAPIMappings               := true,
       testFrameworks                := Seq(new TestFramework("zio.test.sbt.ZTestFramework")),
-      mimaPreviousArtifacts         := previousStableVersion.value.map(organization.value %% name.value % _).toSet,
       mimaCheckDirection            := "backward",
       mimaFailOnProblem             := true,
-      mimaBinaryIssueFilters ++= Seq(
-        ProblemFilters.exclude[Problem]("zio.schema.codec.circe.internal.*"),
-        ProblemFilters.exclude[DirectMissingMethodProblem]("zio.schema.codec.circe.CirceCodec.schemaDecoder"),
-        ProblemFilters.exclude[DirectMissingMethodProblem](
-          "zio.schema.codec.circe.jsoniter.CirceJsoniterCodec.schemaEncoder",
-        ),
-        ProblemFilters.exclude[DirectMissingMethodProblem](
-          "zio.schema.codec.circe.jsoniter.CirceJsoniterCodec.schemaDecoder",
-        ),
-        ProblemFilters.exclude[DirectMissingMethodProblem](
-          "zio.schema.codec.circe.jsoniter.CirceJsoniterCodec.schemaCodec",
-        ),
-      ),
+      mimaFailOnNoPrevious          := false,
+      mimaPreviousArtifacts         := {
+        BinCompatVersionToCompare match {
+          case Some(version) => Set(organization.value %% name.value % version)
+          case None          =>
+            Set.empty
+        }
+      },
+      mimaReportSignatureProblems   := true,
     )
-
-  def mimaSettings(binCompatVersionToCompare: Option[String], failOnProblem: Boolean): Seq[Def.Setting[?]] =
-    binCompatVersionToCompare match {
-      case None                   => Seq(mimaPreviousArtifacts := Set.empty)
-      case Some(binCompatVersion) =>
-        Seq(
-          mimaPreviousArtifacts := Set(organization.value %% name.value % binCompatVersion),
-          mimaFailOnProblem     := failOnProblem,
-        )
-    }
 }

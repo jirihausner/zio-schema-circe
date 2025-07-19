@@ -3,11 +3,11 @@ package zio.schema.codec.circe.jsoniter
 import com.github.plokhotnyuk.jsoniter_scala.circe.JsoniterScalaCodec.jsonC3c
 import com.github.plokhotnyuk.jsoniter_scala.core.{readFromArray, readFromString, writeToArray}
 import io.circe._
-import zio.schema.Schema
-import zio.schema.codec.circe.CirceCodec.{Config, Configuration}
-import zio.schema.codec.circe.internal.JsonSplitter
+import zio.schema.codec.circe.internal.{Configuration => InternalConfiguration, JsonSplitter}
 import zio.schema.codec.circe.jsoniter.internal.Codecs
+import zio.schema.codec.circe.{DiscriminatorSetting, ExplicitConfig}
 import zio.schema.codec.{BinaryCodec, DecodeError}
+import zio.schema.{NameFormat, Schema}
 import zio.stream.ZPipeline
 import zio.{Cause, Chunk}
 
@@ -15,15 +15,128 @@ import java.nio.charset.StandardCharsets
 
 object CirceJsoniterCodec {
 
-  implicit def circeJsoniterBinaryCodec[A](implicit codec: Encoder[A] with Decoder[A]): BinaryCodec[A] =
+  @deprecated(
+    """Use CirceCodec.Configuration instead.
+ CirceCodec.Configuration allows configuring encoding/decoding of empty collection and nulls independently.""",
+    "0.4.0",
+  )
+  final case class Config(
+    ignoreEmptyCollections: Boolean,
+    ignoreNullValues: Boolean = true,
+    treatStreamsAsArrays: Boolean = false,
+  ) {
+    private[circe] def toConfiguration: Configuration = Configuration(
+      explicitEmptyCollections = ExplicitConfig(
+        encoding = !ignoreEmptyCollections,
+        decoding = !ignoreEmptyCollections,
+      ),
+      explicitNullValues = ExplicitConfig(
+        encoding = !ignoreNullValues,
+        decoding = !ignoreNullValues,
+      ),
+      treatStreamsAsArrays = treatStreamsAsArrays,
+    )
+  }
+
+  object Config {
+
+    @deprecated(
+      """Use CirceCodec.Configuration.default instead.
+ CirceCodec.Configuration allows configuring encoding/decoding of empty collection and nulls independently.""",
+      "0.4.0",
+    )
+    val default: Config = Config(ignoreEmptyCollections = false)
+  }
+
+  /**
+   * Configuration for the JSON codec. The configurations are overruled by the
+   * annotations that configure the same behavior.
+   *
+   * @param explicitEmptyCollections
+   *   whether to encode empty collections as `[]` or omit the field and decode
+   *   the field when it is missing as an empty collection or fail
+   * @param explicitNulls
+   *   whether to encode empty Options as `null` or omit the field and decode
+   *   the field when it is missing to None or fail
+   * @param discriminatorSettings
+   *   set up how to handle discriminators
+   * @param fieldNameFormat
+   *   format for the field names
+   * @param treatStreamsAsArrays
+   *   whether to treat streams as arrays when encoding/decoding
+   * @param rejectExtraFields
+   *   whether to reject extra fields during decoding
+   */
+  final case class Configuration(
+    explicitEmptyCollections: ExplicitConfig = ExplicitConfig(),
+    explicitNullValues: ExplicitConfig = ExplicitConfig(),
+    discriminatorSettings: DiscriminatorSetting = DiscriminatorSetting.default,
+    fieldNameFormat: NameFormat = NameFormat.Identity,
+    treatStreamsAsArrays: Boolean = false,
+    rejectExtraFields: Boolean = false,
+  ) extends InternalConfiguration {
+    def withEmptyCollectionsIgnored: Configuration =
+      copy(explicitEmptyCollections = ExplicitConfig(encoding = false, decoding = false))
+
+    def withNullValuesIgnored: Configuration =
+      copy(explicitNullValues = ExplicitConfig(encoding = false, decoding = false))
+
+    def withNoDiscriminator: Configuration = copy(discriminatorSettings = DiscriminatorSetting.NoDiscriminator)
+
+    def withDiscriminator(format: NameFormat): Configuration =
+      copy(discriminatorSettings = DiscriminatorSetting.ClassName(format))
+
+    def withDiscriminator(name: String, format: NameFormat = NameFormat.Identity): Configuration =
+      copy(discriminatorSettings = DiscriminatorSetting.Name(name, format))
+
+    def withFieldFormat(format: NameFormat): Configuration = copy(fieldNameFormat = format)
+
+    def withStreamsTreatedAsArrays: Configuration = copy(treatStreamsAsArrays = true)
+
+    def withExtraFieldsSkipped: Configuration = copy(rejectExtraFields = false)
+
+    def withExtraFieldsRejected: Configuration = copy(rejectExtraFields = true)
+  }
+
+  object Configuration {
+    val default: Configuration = Configuration()
+  }
+
+  object implicits {
+
+    @inline
+    implicit def circeJsoniterBinaryCodec[A](implicit
+      decoder: Decoder[A],
+      encoder: Encoder[A],
+      config: Configuration,
+    ): BinaryCodec[A] = CirceJsoniterCodec.circeJsoniterBinaryCodec(config)
+
+    @inline
+    implicit def schemaBasedBinaryCodec[A](implicit schema: Schema[A], config: Configuration): BinaryCodec[A] =
+      CirceJsoniterCodec.schemaBasedBinaryCodec(config)
+
+    @inline
+    implicit def schemaCodec[A](implicit schema: Schema[A], config: Configuration): Codec[A] =
+      CirceJsoniterCodec.schemaCodec(config)(schema)
+  }
+
+  @deprecated("Use CirceJsoniterCodec.implicits.circeJsoniterBinaryCodec instead", "0.4.0")
+  implicit def circeJsoniterBinaryCodec[A](codec: Encoder[A] with Decoder[A]): BinaryCodec[A] = {
+    implicit val encoder: Encoder[A] = codec
+    implicit val decoder: Decoder[A] = codec
+    circeJsoniterBinaryCodec(Configuration.default)
+  }
+
+  @inline
+  def circeJsoniterBinaryCodec[A](implicit encoder: Encoder[A], decoder: Decoder[A]): BinaryCodec[A] =
     circeJsoniterBinaryCodec(Configuration.default)
 
-  implicit def circeJsoniterBinaryCodec[A](
+  def circeJsoniterBinaryCodec[A](
     config: Configuration,
-  )(implicit codec: Encoder[A] with Decoder[A]): BinaryCodec[A] =
+  )(implicit encoder: Encoder[A], decoder: Decoder[A]): BinaryCodec[A] =
     new BinaryCodec[A] {
 
-      override def encode(value: A): Chunk[Byte] = Chunk.fromArray(writeToArray(codec(value))(jsonC3c))
+      override def encode(value: A): Chunk[Byte] = Chunk.fromArray(writeToArray(encoder(value))(jsonC3c))
 
       override def streamEncoder: ZPipeline[Any, Nothing, A, Byte] =
         if (config.treatStreamsAsArrays) {
@@ -39,7 +152,7 @@ object CirceJsoniterCodec {
         }
 
       override def decode(whole: Chunk[Byte]): Either[DecodeError, A] =
-        codec(readFromArray(whole.toArray)(jsonC3c).hcursor).left
+        decoder(readFromArray(whole.toArray)(jsonC3c).hcursor).left
           .map(failure => DecodeError.ReadError(Cause.fail(failure), failure.getMessage))
 
       override def streamDecoder: ZPipeline[Any, DecodeError, Byte, A] =
@@ -49,14 +162,18 @@ object CirceJsoniterCodec {
           (if (config.treatStreamsAsArrays) JsonSplitter.splitJsonArrayElements
            else JsonSplitter.splitOnJsonBoundary) >>>
           ZPipeline.mapEitherChunked { (json: String) =>
-            codec(readFromString(json)(jsonC3c).hcursor).left
+            decoder(readFromString(json)(jsonC3c).hcursor).left
               .map(error => DecodeError.ReadError(Cause.fail(error), error.getMessage))
           }
     }
 
-  @deprecated("Use Configuration based method instead", "0.3.2")
+  @deprecated("Use Configuration based method instead", "0.4.0")
   def schemaBasedBinaryCodec[A](config: Config)(implicit schema: Schema[A]): BinaryCodec[A] =
     schemaBasedBinaryCodec(config.toConfiguration)
+
+  @inline
+  def schemaBasedBinaryCodec[A](implicit schema: Schema[A]): BinaryCodec[A] =
+    schemaBasedBinaryCodec(Configuration.default)
 
   def schemaBasedBinaryCodec[A](config: Configuration)(implicit schema: Schema[A]): BinaryCodec[A] =
     new BinaryCodec[A] {
@@ -99,16 +216,17 @@ object CirceJsoniterCodec {
           }
     }
 
-  @deprecated("Use Configuration based method instead", "0.3.2")
+  @deprecated("Use Configuration based method instead", "0.4.0")
   def schemaEncoder[A](schema: Schema[A])(implicit config: Config = Config.default): Encoder[A] =
     Codecs.encodeSchema(schema, config.toConfiguration)
 
-  def schemaEncoder[A](schema: Schema[A])(implicit config: Configuration): Encoder[A] =
+  @inline
+  def schemaEncoder[A](config: Configuration)(schema: Schema[A]): Encoder[A] =
     Codecs.encodeSchema(schema, config)
 
   object CirceJsoniterEncoder {
 
-    @deprecated("Use Configuration based method instead", "0.3.2")
+    @deprecated("Use Configuration based method instead", "0.4.0")
     final def encode[A](schema: Schema[A], value: A, config: Config): Chunk[Byte] =
       encode(schema, value, config.toConfiguration)
 
@@ -116,12 +234,16 @@ object CirceJsoniterCodec {
       Chunk.fromArray(writeToArray(Codecs.encodeSchema(schema, config)(value))(jsonC3c))
   }
 
-  def schemaDecoder[A](schema: Schema[A])(implicit config: Configuration = Configuration.default): Decoder[A] =
+  @inline
+  def schemaDecoder[A](schema: Schema[A]): Decoder[A] = schemaDecoder(Configuration.default)(schema)
+
+  @inline
+  def schemaDecoder[A](config: Configuration)(schema: Schema[A]): Decoder[A] =
     Codecs.decodeSchema(schema, config)
 
   object CirceJsoniterDecoder {
 
-    @deprecated("Use Configuration based method instead", "0.3.2")
+    @deprecated("Use Configuration based method instead", "0.4.0")
     final def decode[A](schema: Schema[A], json: String): Either[Error, A] =
       decode(schema, json, Configuration.default)
 
@@ -132,16 +254,16 @@ object CirceJsoniterCodec {
     ): Either[Error, A] = {
       implicit val decoder: Decoder[A] = Codecs.decodeSchema(schema, config)
       decoder(readFromString(json)(jsonC3c).hcursor)
-      parser.decode[A](json)
     }
   }
 
-  @deprecated("Use Configuration based method instead", "0.3.2")
+  @deprecated("Use Configuration based method instead", "0.4.0")
   def schemaCodec[A](schema: Schema[A])(implicit config: Config = Config.default): Codec[A] = {
     val configuration: Configuration = config.toConfiguration
     Codec.from(Codecs.decodeSchema(schema, configuration), Codecs.encodeSchema(schema, configuration))
   }
 
-  def schemaCodec[A](schema: Schema[A])(implicit config: Configuration): Codec[A] =
+  @inline
+  def schemaCodec[A](config: Configuration)(schema: Schema[A]): Codec[A] =
     Codec.from(Codecs.decodeSchema(schema, config), Codecs.encodeSchema(schema, config))
 }
