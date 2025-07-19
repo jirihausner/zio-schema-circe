@@ -2,12 +2,11 @@ package zio.schema.codec.circe
 
 import io.circe._
 import zio.schema._
-import zio.schema.codec.circe.internal.{Codecs, JsonSplitter}
+import zio.schema.codec.circe.internal.{Codecs, Configuration => InternalConfiguration, JsonSplitter}
 import zio.schema.codec.{BinaryCodec, DecodeError}
 import zio.stream.ZPipeline
 import zio.{Cause, Chunk}
 
-import java.nio.CharBuffer
 import java.nio.charset.StandardCharsets
 
 object CirceCodec {
@@ -15,7 +14,7 @@ object CirceCodec {
   @deprecated(
     """Use CirceCodec.Configuration instead.
  CirceCodec.Configuration allows configuring encoding/decoding of empty collection and nulls independently.""",
-    "0.3.2",
+    "0.4.0",
   )
   final case class Config(
     ignoreEmptyCollections: Boolean,
@@ -40,17 +39,10 @@ object CirceCodec {
     @deprecated(
       """Use CirceCodec.Configuration.default instead.
  CirceCodec.Configuration allows configuring encoding/decoding of empty collection and nulls independently.""",
-      "0.3.2",
+      "0.4.0",
     )
     val default: Config = Config(ignoreEmptyCollections = false)
   }
-
-  /**
-   * When disabled for encoding, matching fields will be omitted from the JSON.
-   * When disabled for decoding, missing fields will be decoded as default
-   * value.
-   */
-  final case class ExplicitConfig(encoding: Boolean = true, decoding: Boolean = false)
 
   /**
    * Configuration for the JSON codec. The configurations are overruled by the
@@ -78,7 +70,7 @@ object CirceCodec {
     fieldNameFormat: NameFormat = NameFormat.Identity,
     treatStreamsAsArrays: Boolean = false,
     rejectExtraFields: Boolean = false,
-  ) {
+  ) extends InternalConfiguration {
     def withEmptyCollectionsIgnored: Configuration =
       copy(explicitEmptyCollections = ExplicitConfig(encoding = false, decoding = false))
 
@@ -100,45 +92,46 @@ object CirceCodec {
     def withExtraFieldsSkipped: Configuration = copy(rejectExtraFields = false)
 
     def withExtraFieldsRejected: Configuration = copy(rejectExtraFields = true)
-
-    val noDiscriminator: Boolean = discriminatorSettings match {
-      case DiscriminatorSetting.NoDiscriminator => true
-      case _                                    => false
-    }
-
-    val discriminatorName: Option[String] = discriminatorSettings match {
-      case DiscriminatorSetting.Name(name, _) => Some(name)
-      case _                                  => None
-    }
-
-    val discriminatorFormat: NameFormat = discriminatorSettings match {
-      case DiscriminatorSetting.ClassName(format) => format
-      case DiscriminatorSetting.Name(_, format)   => format
-      case _                                      => NameFormat.Identity
-    }
   }
 
   object Configuration {
     val default: Configuration = Configuration()
   }
 
-  sealed trait DiscriminatorSetting
+  object implicits {
 
-  object DiscriminatorSetting {
-    val default: ClassName = ClassName(NameFormat.Identity)
-    case class ClassName(format: NameFormat)                                extends DiscriminatorSetting
-    case object NoDiscriminator                                             extends DiscriminatorSetting
-    case class Name(name: String, format: NameFormat = NameFormat.Identity) extends DiscriminatorSetting
+    @inline
+    implicit def circeBinaryCodec[A](implicit
+      decoder: Decoder[A],
+      encoder: Encoder[A],
+      config: Configuration,
+    ): BinaryCodec[A] = CirceCodec.circeBinaryCodec(config)
+
+    @inline
+    implicit def schemaBasedBinaryCodec[A](implicit schema: Schema[A], config: Configuration): BinaryCodec[A] =
+      CirceCodec.schemaBasedBinaryCodec(config)
+
+    @inline
+    implicit def schemaCodec[A](implicit schema: Schema[A], config: Configuration): Codec[A] =
+      CirceCodec.schemaCodec(config)(schema)
   }
 
-  implicit def circeBinaryCodec[A](implicit codec: Encoder[A] with Decoder[A]): BinaryCodec[A] =
+  @deprecated("Use CirceCodec.implicits.circeBinaryCodec instead", "0.4.0")
+  implicit def circeBinaryCodec[A](codec: Encoder[A] with Decoder[A]): BinaryCodec[A] = {
+    implicit val encoder: Encoder[A] = codec
+    implicit val decoder: Decoder[A] = codec
+    circeBinaryCodec(Configuration.default)
+  }
+
+  @inline
+  def circeBinaryCodec[A](implicit encoder: Encoder[A], decoder: Decoder[A]): BinaryCodec[A] =
     circeBinaryCodec(Configuration.default)
 
-  implicit def circeBinaryCodec[A](config: Configuration)(implicit codec: Encoder[A] with Decoder[A]): BinaryCodec[A] =
+  def circeBinaryCodec[A](config: Configuration)(implicit encoder: Encoder[A], decoder: Decoder[A]): BinaryCodec[A] =
     new BinaryCodec[A] {
 
       override def encode(value: A): Chunk[Byte] =
-        Chunk.fromArray(codec(value).noSpaces.getBytes(StandardCharsets.UTF_8))
+        Chunk.fromArray(encoder(value).noSpaces.getBytes(StandardCharsets.UTF_8))
 
       override def streamEncoder: ZPipeline[Any, Nothing, A, Byte] =
         if (config.treatStreamsAsArrays) {
@@ -170,9 +163,13 @@ object CirceCodec {
           }
     }
 
-  @deprecated("Use Configuration based method instead", "0.3.2")
+  @deprecated("Use Configuration based method instead", "0.4.0")
   def schemaBasedBinaryCodec[A](config: Config)(implicit schema: Schema[A]): BinaryCodec[A] =
     schemaBasedBinaryCodec(config.toConfiguration)
+
+  @inline
+  def schemaBasedBinaryCodec[A](implicit schema: Schema[A]): BinaryCodec[A] =
+    schemaBasedBinaryCodec(Configuration.default)
 
   def schemaBasedBinaryCodec[A](config: Configuration)(implicit schema: Schema[A]): BinaryCodec[A] =
     new BinaryCodec[A] {
@@ -210,21 +207,19 @@ object CirceCodec {
           }
     }
 
-  @deprecated("Use Configuration based method instead", "0.3.2")
+  @deprecated("Use Configuration based method instead", "0.4.0")
   def schemaEncoder[A](schema: Schema[A])(implicit config: Config = Config.default): Encoder[A] =
     Codecs.encodeSchema(schema, config.toConfiguration)
 
-  def schemaEncoder[A](schema: Schema[A])(implicit config: Configuration): Encoder[A] =
+  @inline
+  def schemaEncoder[A](config: Configuration)(schema: Schema[A]): Encoder[A] =
     Codecs.encodeSchema(schema, config)
 
   object CirceEncoder {
 
-    private[circe] def charSequenceToByteChunk(chars: CharSequence): Chunk[Byte] = {
-      val bytes = StandardCharsets.UTF_8.newEncoder().encode(CharBuffer.wrap(chars))
-      Chunk.fromByteBuffer(bytes)
-    }
+    import zio.schema.codec.circe.internal.charSequenceToByteChunk
 
-    @deprecated("Use Configuration based method instead", "0.3.2")
+    @deprecated("Use Configuration based method instead", "0.4.0")
     final def encode[A](schema: Schema[A], value: A, config: Config): Chunk[Byte] =
       encode(schema, value, config.toConfiguration)
 
@@ -232,12 +227,16 @@ object CirceCodec {
       charSequenceToByteChunk(Codecs.encodeSchema(schema, config)(value).noSpaces)
   }
 
-  def schemaDecoder[A](schema: Schema[A])(implicit config: Configuration = Configuration.default): Decoder[A] =
+  @inline
+  def schemaDecoder[A](schema: Schema[A]): Decoder[A] = schemaDecoder(Configuration.default)(schema)
+
+  @inline
+  def schemaDecoder[A](config: Configuration)(schema: Schema[A]): Decoder[A] =
     Codecs.decodeSchema(schema, config)
 
   object CirceDecoder {
 
-    @deprecated("Use Configuration based method instead", "0.3.2")
+    @deprecated("Use Configuration based method instead", "0.4.0")
     final def decode[A](schema: Schema[A], json: String): Either[Error, A] =
       decode(schema, json, Configuration.default)
 
@@ -251,12 +250,13 @@ object CirceCodec {
     }
   }
 
-  @deprecated("Use Configuration based method instead", "0.3.2")
+  @deprecated("Use Configuration based method instead", "0.4.0")
   def schemaCodec[A](schema: Schema[A])(implicit config: Config = Config.default): Codec[A] = {
     val configuration: Configuration = config.toConfiguration
     Codec.from(Codecs.decodeSchema(schema, configuration), Codecs.encodeSchema(schema, configuration))
   }
 
-  def schemaCodec[A](schema: Schema[A])(implicit config: Configuration): Codec[A] =
+  @inline
+  def schemaCodec[A](config: Configuration)(schema: Schema[A]): Codec[A] =
     Codec.from(Codecs.decodeSchema(schema, config), Codecs.encodeSchema(schema, config))
 }

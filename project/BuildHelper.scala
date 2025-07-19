@@ -27,7 +27,9 @@ object BuildHelper {
 
   val Scala212: String = versions("2.12")
   val Scala213: String = versions("2.13")
-  val Scala3: String   = versions("3.5")
+  val Scala3: String   = versions("3.3")
+
+  val BinCompatVersionToCompare: Option[String] = Some("0.3.2")
 
   object Versions {
 
@@ -79,7 +81,7 @@ object BuildHelper {
       case Some((3, _))  =>
         Seq(
           "-Xignore-scala2-macros",
-          "-Xkind-projector",
+          "-Ykind-projector",
         )
       case Some((2, 13)) =>
         Seq(
@@ -91,15 +93,16 @@ object BuildHelper {
         ) ++ std2xOptions ++ optimizerOptions
       case Some((2, 12)) =>
         Seq(
-          "-Ypartial-unification",
           "-opt-warnings",
-          "-Ywarn-extra-implicit",
           "-Yno-adapted-args",
+          "-Ypartial-unification",
+          "-Ywarn-extra-implicit",
           "-Ywarn-inaccessible",
           "-Ywarn-nullary-override",
           "-Ywarn-nullary-unit",
-          "-Wconf:cat=unused-nowarn:s",
+          "-Ywarn-unused-import",
           "-Wconf:cat=deprecation:silent",
+          "-Wconf:cat=unused-nowarn:s",
         ) ++ std2xOptions ++ optimizerOptions
       case _             => Seq.empty
     }
@@ -222,31 +225,16 @@ object BuildHelper {
       incOptions ~= (_.withLogRecompileOnMacro(true)),
       autoAPIMappings               := true,
       testFrameworks                := Seq(new TestFramework("zio.test.sbt.ZTestFramework")),
-      mimaPreviousArtifacts         := previousStableVersion.value.map(organization.value %% name.value % _).toSet,
       mimaCheckDirection            := "backward",
       mimaFailOnProblem             := true,
-      mimaBinaryIssueFilters ++= Seq(
-        ProblemFilters.exclude[Problem]("zio.schema.codec.circe.internal.*"),
-        ProblemFilters.exclude[DirectMissingMethodProblem]("zio.schema.codec.circe.CirceCodec.schemaDecoder"),
-        ProblemFilters.exclude[DirectMissingMethodProblem](
-          "zio.schema.codec.circe.jsoniter.CirceJsoniterCodec.schemaEncoder",
-        ),
-        ProblemFilters.exclude[DirectMissingMethodProblem](
-          "zio.schema.codec.circe.jsoniter.CirceJsoniterCodec.schemaDecoder",
-        ),
-        ProblemFilters.exclude[DirectMissingMethodProblem](
-          "zio.schema.codec.circe.jsoniter.CirceJsoniterCodec.schemaCodec",
-        ),
-      ),
+      mimaFailOnNoPrevious          := false,
+      mimaPreviousArtifacts         := {
+        BinCompatVersionToCompare match {
+          case Some(version) => Set(organization.value %% name.value % version)
+          case None          =>
+            Set.empty
+        }
+      },
+      mimaReportSignatureProblems   := true,
     )
-
-  def mimaSettings(binCompatVersionToCompare: Option[String], failOnProblem: Boolean): Seq[Def.Setting[?]] =
-    binCompatVersionToCompare match {
-      case None                   => Seq(mimaPreviousArtifacts := Set.empty)
-      case Some(binCompatVersion) =>
-        Seq(
-          mimaPreviousArtifacts := Set(organization.value %% name.value % binCompatVersion),
-          mimaFailOnProblem     := failOnProblem,
-        )
-    }
 }

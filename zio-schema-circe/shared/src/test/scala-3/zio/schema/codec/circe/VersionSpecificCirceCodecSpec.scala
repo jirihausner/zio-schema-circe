@@ -6,16 +6,17 @@ import zio.Console.*
 import zio.*
 import zio.schema.*
 import zio.schema.annotation.*
+import zio.schema.codec.circe.CirceCodec.Configuration
 import zio.test.Assertion.*
 import zio.test.TestAspect.*
 import zio.test.{assert, assertTrue, Spec, TestEnvironment, ZIOSpecDefault}
 
 object VersionSpecificCirceCodecSpec extends VersionSpecificCodecSpec {
 
-  implicit val config: CirceCodec.Configuration = CirceCodec.Configuration.default
+  implicit val config: Configuration = Configuration.default
 
-  override protected def schemaEncoder[A: Schema]: Encoder[A] = CirceCodec.schemaEncoder(Schema[A])
-  override protected def schemaDecoder[A: Schema]: Decoder[A] = CirceCodec.schemaDecoder(Schema[A])
+  override protected def schemaEncoder[A: Schema]: Encoder[A] = CirceCodec.schemaEncoder(config)(Schema[A])
+  override protected def schemaDecoder[A: Schema]: Decoder[A] = CirceCodec.schemaDecoder(config)(Schema[A])
 
   def spec: Spec[TestEnvironment, Any] =
     suite("VersionSpecificCirceCodecSpec")(

@@ -3,9 +3,8 @@ package zio.schema.codec.circe.internal
 import zio.prelude.NonEmptyMap
 import zio.schema._
 import zio.schema.annotation._
-import zio.schema.codec.circe.CirceCodec.CirceEncoder.charSequenceToByteChunk
-import zio.schema.codec.circe.CirceCodec.Configuration
 import zio.schema.codec.circe.internal.Data._
+import zio.schema.codec.circe.internal.{Configuration => InternalConfiguration}
 import zio.stream.ZStream
 import zio.test.Assertion._
 import zio.test.TestAspect.ignore
@@ -17,17 +16,21 @@ import scala.collection.immutable.ListMap
 
 private[circe] trait EncoderSpecs extends StringUtils {
 
-  protected def IgnoreEmptyCollectionsConfig: Configuration       // should ignore empty collections
-  protected def KeepNullsAndEmptyColleciontsConfig: Configuration // should keep nulls and empty collections
-  protected def StreamingConfig: Configuration // should keep empty collections and treat streams as arrays
+  type Config <: InternalConfiguration
 
-  protected def BinaryCodec[A]: (Schema[A], Configuration) => codec.BinaryCodec[A]
+  protected def DefaultConfig: Config // default configuration
+
+  protected def IgnoreEmptyCollectionsConfig: Config       // should ignore empty collections
+  protected def KeepNullsAndEmptyColleciontsConfig: Config // should keep nulls and empty collections
+  protected def StreamingConfig: Config                    // should keep empty collections and treat streams as arrays
+
+  protected def BinaryCodec[A]: (Schema[A], Config) => codec.BinaryCodec[A]
 
   final protected def assertEncodes[A](
     schema: Schema[A],
     value: A,
     json: CharSequence,
-    config: Configuration = Configuration.default,
+    config: Config = DefaultConfig,
     debug: Boolean = false,
   ): ZIO[Any, Nothing, TestResult] = {
     val stream = ZStream
@@ -45,7 +48,7 @@ private[circe] trait EncoderSpecs extends StringUtils {
     schema: Schema[A],
     value: A,
     precision: java.math.BigDecimal => java.math.BigDecimal,
-    config: Configuration = Configuration.default,
+    config: Config = DefaultConfig,
     debug: Boolean = false,
   ): ZIO[Any, Nothing, TestResult] = {
     val json   = precision(new java.math.BigDecimal(value.toString)).stripTrailingZeros.toPlainString
@@ -69,7 +72,7 @@ private[circe] trait EncoderSpecs extends StringUtils {
     schema: Schema[A],
     values: Seq[A],
     json: CharSequence,
-    config: Configuration = Configuration.default,
+    config: Config = DefaultConfig,
     debug: Boolean = false,
   ): ZIO[Any, Nothing, TestResult] = {
     val stream = ZStream
@@ -322,6 +325,22 @@ private[circe] trait EncoderSpecs extends StringUtils {
           Schema.map[Int, Value],
           Map(0 -> Value(0, true), 1 -> Value(1, false)),
           """{"0":{"first":0,"second":true},"1":{"first":1,"second":false}}""",
+        )
+      },
+      test("of uuid keys and values") {
+        check(Gen.uuid) { uuid =>
+          assertEncodes(
+            Schema.map[java.util.UUID, Value],
+            Map(uuid -> Value(0, true)),
+            s"""{"$uuid":{"first":0,"second":true}}""",
+          )
+        }
+      },
+      test("of simple enums and values") {
+        assertEncodes(
+          Schema.map[Color, Value](Schema[Color], Schema[Value]),
+          Map(Color.Red -> Value(0, true), Color.Blue -> Value(1, false), Color.Grass -> Value(2, true)),
+          """{"Red":{"first":0,"second":true},"Blue":{"first":1,"second":false},"Green":{"first":2,"second":true}}""",
         )
       },
       test("of simple keys and values where the key's schema is lazy") {
