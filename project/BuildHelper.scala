@@ -162,7 +162,12 @@ object BuildHelper {
       val os = System.getProperty("os.name").toLowerCase
       // For some unknown reason, we can't run the test suites in debug mode on MacOS
       if (os.contains("mac")) cfg.withMode(Mode.releaseFast)
-      else cfg.withGC(GC.boehm) // See https://github.com/scala-native/scala-native/issues/4032
+      else //cfg.withGC(GC.boehm) // See https://github.com/scala-native/scala-native/issues/4032
+        cfg
+          .withGC(GC.boehm)
+          .withSourceLevelDebuggingConfig(_.enableAll) // enable generation of debug information
+          .withOptimize(false) // disable Scala Native optimizer
+          .withMode(Mode.debug)
     },
     scalacOptions += {
       if (crossProjectPlatform.value == NativePlatform)
@@ -170,6 +175,7 @@ object BuildHelper {
       else ""
     },
     Test / fork := crossProjectPlatform.value == JVMPlatform, // set fork to `true` on JVM to improve log readability, JS and Native need `false`
+    Test / parallelExecution := crossProjectPlatform != NativePlatform, // disable parallel execution in CI to avoid flaky tests
   )
 
   def macroDefinitionSettings = Seq(
