@@ -164,7 +164,9 @@ object BuildHelper {
       if (os.contains("mac")) cfg.withMode(Mode.releaseFast)
       else //cfg.withGC(GC.boehm) // See https://github.com/scala-native/scala-native/issues/4032
         cfg
-          .withGC(GC.boehm)
+          // .withMode(Mode.releaseFast) // TODO: Test with `Mode.releaseSize` and `Mode.releaseFull`
+          .withLTO(LTO.none)
+          // .withGC(GC.boehm)
           .withSourceLevelDebuggingConfig(_.enableAll) // enable generation of debug information
           .withOptimize(false) // disable Scala Native optimizer
           .withMode(Mode.debug)
