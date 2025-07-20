@@ -58,7 +58,9 @@ jobs:
         if: steps.coursier-cache.outputs.cache-hit-sbt-ivy2-cache != 'true'
         run: sbt +update
       - name: Run tests
-        run: sbt ++${{ matrix.scala }}! test${{ matrix.platform }}
+        run: |
+          export SCALANATIVE_TEST_DEBUG_SIGNALS=1
+          sbt ++${{ matrix.scala }}! test${{ matrix.platform }}
   mima_check:
     runs-on: ubuntu-latest
     timeout-minutes: 30
