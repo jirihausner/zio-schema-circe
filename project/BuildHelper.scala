@@ -164,12 +164,12 @@ object BuildHelper {
       if (os.contains("mac")) cfg.withMode(Mode.releaseFast)
       else // cfg.withGC(GC.boehm) // See https://github.com/scala-native/scala-native/issues/4032
         cfg
-          // .withMode(Mode.releaseFast) // TODO: Test with `Mode.releaseSize` and `Mode.releaseFull`
+          .withMode(Mode.releaseFast) // TODO: Test with `Mode.releaseSize` and `Mode.releaseFull`
           .withLTO(LTO.none)
           // .withGC(GC.boehm)
-          .withSourceLevelDebuggingConfig(_.enableAll) // enable generation of debug information
-          .withOptimize(false) // disable Scala Native optimizer
-          .withMode(Mode.debug)
+          // .withSourceLevelDebuggingConfig(_.enableAll) // enable generation of debug information
+          // .withOptimize(false) // disable Scala Native optimizer
+          // .withMode(Mode.debug)
     },
     scalacOptions += {
       if (crossProjectPlatform.value == NativePlatform)
