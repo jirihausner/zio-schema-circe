@@ -158,18 +158,9 @@ object BuildHelper {
         baseDirectory.value,
       )
     },
-    nativeConfig ~= { cfg =>
-      val os = System.getProperty("os.name").toLowerCase
-      // For some unknown reason, we can't run the test suites in debug mode on MacOS
-      if (os.contains("mac")) cfg.withMode(Mode.releaseFast)
-      else // cfg.withGC(GC.boehm) // See https://github.com/scala-native/scala-native/issues/4032
-        cfg
-          .withMode(Mode.releaseFast) // TODO: Test with `Mode.releaseSize` and `Mode.releaseFull`
-          .withLTO(LTO.none)
-          // .withGC(GC.boehm)
-          // .withSourceLevelDebuggingConfig(_.enableAll) // enable generation of debug information
-          // .withOptimize(false) // disable Scala Native optimizer
-          // .withMode(Mode.debug)
+    nativeConfig ~= {
+      _.withMode(Mode.releaseFast)
+        .withLTO(LTO.none)
     },
     scalacOptions += {
       if (crossProjectPlatform.value == NativePlatform)
