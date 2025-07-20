@@ -12,7 +12,7 @@ import scalanativecrossproject.NativePlatform
 
 import java.util.{List => JList, Map => JMap}
 import scala.jdk.CollectionConverters._
-import scala.scalanative.build.{GC, Mode}
+import scala.scalanative.build.{GC, LTO, Mode}
 import scala.scalanative.sbtplugin.ScalaNativePlugin.autoImport.nativeConfig
 
 object BuildHelper {
@@ -162,7 +162,7 @@ object BuildHelper {
       val os = System.getProperty("os.name").toLowerCase
       // For some unknown reason, we can't run the test suites in debug mode on MacOS
       if (os.contains("mac")) cfg.withMode(Mode.releaseFast)
-      else //cfg.withGC(GC.boehm) // See https://github.com/scala-native/scala-native/issues/4032
+      else // cfg.withGC(GC.boehm) // See https://github.com/scala-native/scala-native/issues/4032
         cfg
           // .withMode(Mode.releaseFast) // TODO: Test with `Mode.releaseSize` and `Mode.releaseFull`
           .withLTO(LTO.none)
