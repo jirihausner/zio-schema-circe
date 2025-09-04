@@ -1,7 +1,7 @@
 package zio.schema.codec.circe.jsoniter
 
 import com.github.plokhotnyuk.jsoniter_scala.circe.JsoniterScalaCodec.jsonC3c
-import com.github.plokhotnyuk.jsoniter_scala.core.{readFromArray, readFromString, writeToArray}
+import com.github.plokhotnyuk.jsoniter_scala.core.{JsonReaderException, readFromArray, readFromString, writeToArray}
 import io.circe._
 import zio.schema.codec.circe.internal.{Configuration => InternalConfiguration, ErrorHandler, JsonSplitter}
 import zio.schema.codec.circe.jsoniter.internal.Codecs
@@ -151,8 +151,10 @@ object CirceJsoniterCodec {
           ZPipeline.mapChunks[A, Chunk[Byte]](_.map(encode)).intersperse(JsonSplitter.jsonNdSeparator).flattenChunks
         }
 
-      override def decode(whole: Chunk[Byte]): Either[DecodeError, A] =
-        decoder(readFromArray(whole.toArray)(jsonC3c).hcursor).left.map(ErrorHandler.handle)
+      override def decode(whole: Chunk[Byte]): Either[DecodeError, A] = {
+        try decoder(readFromArray(whole.toArray)(jsonC3c).hcursor)
+        catch { case jre: JsonReaderException => Left(ParsingFailure(jre.getMessage, jre)) }
+      }.left.map(ErrorHandler.handle)
 
       override def streamDecoder: ZPipeline[Any, DecodeError, Byte, A] =
         ZPipeline.fromChannel {
@@ -161,8 +163,10 @@ object CirceJsoniterCodec {
           (if (config.treatStreamsAsArrays) JsonSplitter.splitJsonArrayElements
            else JsonSplitter.splitOnJsonBoundary) >>>
           ZPipeline.mapEitherChunked { (json: String) =>
-            decoder(readFromString(json)(jsonC3c).hcursor).left.map(ErrorHandler.handle)
+            try decoder(readFromString(json)(jsonC3c).hcursor)
+            catch { case jre: JsonReaderException => Left(ParsingFailure(jre.getMessage, jre)) }
           }
+            .mapError(ErrorHandler.handle)
     }
 
   @deprecated("Use Configuration based method instead", "0.4.0")
@@ -251,7 +255,8 @@ object CirceJsoniterCodec {
       config: Configuration,
     ): Either[Error, A] = {
       implicit val decoder: Decoder[A] = Codecs.decodeSchema(schema, config)
-      decoder(readFromString(json)(jsonC3c).hcursor)
+      try decoder(readFromString(json)(jsonC3c).hcursor)
+      catch { case jre: JsonReaderException => Left(ParsingFailure(jre.getMessage, jre)) }
     }
   }
 
