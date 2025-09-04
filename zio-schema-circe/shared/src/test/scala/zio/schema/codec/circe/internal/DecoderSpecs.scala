@@ -8,7 +8,7 @@ import zio.schema._
 import zio.schema.annotation._
 import zio.schema.codec.DecodeError
 import zio.schema.codec.circe.internal.Data._
-import zio.schema.codec.circe.internal.{Configuration => InternalConfiguration, ErrorHandler}
+import zio.schema.codec.circe.internal.{Configuration => InternalConfiguration}
 import zio.stream.ZStream
 import zio.test.Assertion._
 import zio.test.TestAspect.ignore
