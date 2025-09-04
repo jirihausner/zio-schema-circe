@@ -4,7 +4,7 @@ import io.circe.{DecodingFailure, Error, ParsingFailure}
 import zio.schema.codec.DecodeError
 import zio.{Cause, Chunk}
 
-private[internal] object ErrorHandler {
+private[circe] object ErrorHandler {
 
   def handle(error: Error): DecodeError = error match {
     case e: ParsingFailure  => DecodeError.ReadError(Cause.fail(e.underlying), e.message)
