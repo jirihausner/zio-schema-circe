@@ -33,8 +33,7 @@ private[circe] trait Codecs {
     }
   }
 
-  def decodeChunk[A](implicit decoder: Decoder[A]): Decoder[Chunk[A]] =
-    Decoder.decodeVector(decoder).map(Chunk.fromIterable)
+  def decodeChunk[A](implicit decoder: Decoder[A]): Decoder[Chunk[A]] = ZioChunkDecoder.decodeChunk
 
   def encodeSuspend[A](encoder: => Encoder[A]): Encoder[A] = new Encoder[A] {
     lazy val underlying: Encoder[A] = encoder
