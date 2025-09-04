@@ -83,6 +83,13 @@ trait VersionSpecificCodecSpec extends ZIOSpecDefault  {
         assert(schemaEncoder(using schema).apply(value).noSpaces)(equalTo(json))
       }
     ),
+    test("IArray") {
+      val schema = Schema.iArray[Int]
+      val json = """[1,2,3]"""
+      val value = IArray(1, 2, 3)
+      assertTrue(decode(json)(using schemaDecoder(using schema)).exists(_.sameElements(value))) &&
+      assert(schemaEncoder(using schema).apply(value).noSpaces)(equalTo(json))
+    }
   )
 
   case class WithDefaultValue(orderId: Int, description: String = "desc")
