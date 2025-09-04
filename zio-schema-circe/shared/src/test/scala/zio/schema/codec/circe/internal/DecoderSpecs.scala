@@ -1,11 +1,12 @@
 package zio.schema.codec.circe.internal
 
+import io.circe.CursorOp.DownField
+import io.circe.DecodingFailure.Reason.{MissingField, WrongTypeExpectation}
 import io.circe._
 import zio.prelude.NonEmptyMap
 import zio.schema._
 import zio.schema.annotation._
 import zio.schema.codec.DecodeError
-import zio.schema.codec.DecodeError.ReadError
 import zio.schema.codec.circe.internal.Data._
 import zio.schema.codec.circe.internal.{Configuration => InternalConfiguration}
 import zio.stream.ZStream
@@ -29,7 +30,7 @@ private[circe] trait DecoderSpecs extends StringUtils {
   final protected def assertDecodesToError[A](
     schema: Schema[A],
     json: CharSequence,
-    error: Exception,
+    error: Error,
     config: Config = DefaultConfig,
     debug: Boolean = false,
   ): ZIO[Any, Nothing, TestResult] = {
@@ -39,11 +40,11 @@ private[circe] trait DecoderSpecs extends StringUtils {
       .runHead
       .exit
       .tap { exit =>
-        val expected = zio.Exit.Failure(Cause.fail(ReadError(Cause.fail(error), error.getMessage)))
+        val expected = zio.Exit.Failure(Cause.fail(ErrorHandler.handle(error)))
         (Console.printLine(s"expected: $expected") *>
           Console.printLine(s"got:      $exit")).when(debug).ignore
       }
-    assertZIO(stream)(fails(equalTo(ReadError(Cause.fail(error), error.getMessage))))
+    assertZIO(stream)(fails(equalTo(ErrorHandler.handle(error))))
   }
 
   final protected def assertDecodes[A](
@@ -543,7 +544,7 @@ private[circe] trait DecoderSpecs extends StringUtils {
         assertDecodesToError(
           RecordExample.schema.annotate(rejectExtraFields()),
           """{"$f1":"test", "extraField":"extra"}""",
-          DecodingFailure("Unexpected field: extraField", Nil),
+          DecodingFailure("Unexpected extra field", List(DownField("extraField"))),
         )
       },
       test("optional field with schema or annotated default value") {
@@ -689,12 +690,12 @@ private[circe] trait DecoderSpecs extends StringUtils {
         assertDecodesToError(
           PersonWithRejectExtraFields.schema,
           """{"name":"test","age":10,"extraField":10}""",
-          DecodingFailure("Extra field: extraField", Nil),
+          DecodingFailure("Unexpected extra field", List(DownField("extraField"))),
         ) &>
           assertDecodesToError(
             schemaObject.annotate(rejectExtraFields()),
             """{"extraField":10}""",
-            DecodingFailure("Extra field: extraField", Nil),
+            DecodingFailure("Unexpected extra field", List(DownField("extraField"))),
           )
       },
       test("transient field annotation") {
@@ -808,14 +809,14 @@ private[circe] trait DecoderSpecs extends StringUtils {
         assertDecodesToError(
           WithOptionFields.schema,
           """{"a":"s", "b":{}}""",
-          DecodingFailure("Failed to decode field: b", Nil),
+          DecodingFailure("Int", List(DownField("b"))),
         )
       },
       test("case class with complex option field rejects empty json object as value") {
         assertDecodesToError(
           WithComplexOptionField.schema,
           """{"order":{}}""",
-          DecodingFailure("Failed to decode field: order", Nil),
+          DecodingFailure(MissingField, List(DownField("orderId"), DownField("order"))),
         )
       },
       test("case class with complex option field correctly decodes") {
@@ -837,21 +838,21 @@ private[circe] trait DecoderSpecs extends StringUtils {
           assertDecodesToError(
             BigProduct.schema,
             """{}""",
-            DecodingFailure("Missing field: f00", Nil),
+            DecodingFailure(MissingField, List(DownField("f00"))),
           )
         },
         test("rejects extra fields") {
           assertDecodesToError(
             BigProduct.schema.annotate(rejectExtraFields()),
             """{"f00":true,"extraField":10}""",
-            DecodingFailure("Unexpected field: extraField", Nil),
+            DecodingFailure("Unexpected extra field", List(DownField("extraField"))),
           )
         },
         test("rejects duplicated fields") {
           assertDecodesToError(
             BigProduct.schema,
             """{"f00":true,"f01":10,"f-01":8}""",
-            DecodingFailure("Duplicate field: f01", Nil),
+            DecodingFailure("Duplicate field f01", List(DownField("f-01"))),
           )
         },
         test("decodes field name with alias - id") {
@@ -939,14 +940,14 @@ private[circe] trait DecoderSpecs extends StringUtils {
           assertDecodesToError(
             Subscription.schema,
             """{"amount":1000,"type":123}""",
-            DecodingFailure("Malformed subtype: 123", List(CursorOp.DownField("type"))),
+            DecodingFailure(WrongTypeExpectation("string", Json.fromInt(123)), List(DownField("type"))),
           )
         },
         test("case name - missing discriminator field") {
           assertDecodesToError(
             Subscription.schema,
             """{"amount":1000}""",
-            DecodingFailure("Missing subtype: type", Nil),
+            DecodingFailure(MissingField, List(DownField("type"))),
           )
         },
         test("case name - empty fields") {
@@ -966,7 +967,7 @@ private[circe] trait DecoderSpecs extends StringUtils {
               assertDecodesToError(
                 Schema[BigEnum3],
                 """{"type":"Case00"}""",
-                DecodingFailure("Unrecognized subtype: Case00", List(CursorOp.DownField("type"))),
+                DecodingFailure("Unrecognized subtype Case00", List(DownField("type"))),
               )
           },
           test("with caseAliases") {
@@ -977,14 +978,18 @@ private[circe] trait DecoderSpecs extends StringUtils {
             )
           },
           test("fails on missing discriminator field") {
-            assertDecodesToError(Schema[BigEnum3], """{"b":123}""", DecodingFailure("Missing subtype: type", Nil)) &>
-              assertDecodesToError(Schema[BigEnum3], """{}""", DecodingFailure("Missing subtype: type", Nil))
+            assertDecodesToError(
+              Schema[BigEnum3],
+              """{"b":123}""",
+              DecodingFailure(MissingField, List(DownField("type"))),
+            ) &>
+              assertDecodesToError(Schema[BigEnum3], """{}""", DecodingFailure(MissingField, List(DownField("type"))))
           },
           test("fails on invalid case") {
             assertDecodesToError(
               Schema[BigEnum3],
               """{"type":"CaseXX"}""",
-              DecodingFailure("Unrecognized subtype: CaseXX", List(CursorOp.DownField("type"))),
+              DecodingFailure("Unrecognized subtype CaseXX", List(DownField("type"))),
             )
           },
         ),
@@ -1001,14 +1006,14 @@ private[circe] trait DecoderSpecs extends StringUtils {
           assertDecodesToError(
             PaymentMethod.schema,
             "{}",
-            DecodingFailure("Missing subtype", Nil),
+            DecodingFailure("Missing subtype field", Nil),
           )
         },
         test("illegal discriminator case") {
           assertDecodesToError(
             PaymentMethod.schema,
             """{"cash":{}}""",
-            DecodingFailure("Unrecognized subtype: cash", Nil),
+            DecodingFailure("Unrecognized subtype cash", Nil),
           )
         },
         suite("of case classes and case objects with more than 64 cases")(
@@ -1021,7 +1026,7 @@ private[circe] trait DecoderSpecs extends StringUtils {
               assertDecodesToError(
                 Schema[BigEnum2],
                 """{"Case00":{}}""",
-                DecodingFailure("Unrecognized subtype: Case00", Nil),
+                DecodingFailure("Unrecognized subtype Case00", Nil),
               )
           },
           test("with caseAliases") {
@@ -1032,13 +1037,13 @@ private[circe] trait DecoderSpecs extends StringUtils {
             )
           },
           test("no discriminator key") {
-            assertDecodesToError(Schema[BigEnum2], "{}", DecodingFailure("Missing subtype", Nil))
+            assertDecodesToError(Schema[BigEnum2], "{}", DecodingFailure("Missing subtype field", Nil))
           },
           test("invalid case") {
             assertDecodesToError(
               Schema[BigEnum2],
               """{"CaseXX":{}}""",
-              DecodingFailure("Unrecognized subtype: CaseXX", Nil),
+              DecodingFailure("Unrecognized subtype CaseXX", Nil),
             )
           },
         ),
