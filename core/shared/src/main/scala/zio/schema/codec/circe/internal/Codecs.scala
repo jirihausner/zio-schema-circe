@@ -1,5 +1,7 @@
 package zio.schema.codec.circe.internal
 
+import io.circe.CursorOp.DownField
+import io.circe.DecodingFailure.Reason.{MissingField, WrongTypeExpectation}
 import io.circe._
 import zio.Chunk
 import zio.prelude.NonEmptyMap
@@ -512,9 +514,9 @@ private[circe] trait Codecs {
         }
 
         override def apply(c: HCursor): Decoder.Result[Z] = {
-          c.as[String].flatMap { str =>
-            val result = cases.get(str)
-            if (result == null) Left(DecodingFailure(s"Unrecognized subtype: $str", c.history))
+          c.as[String].flatMap { cse =>
+            val result = cases.get(cse)
+            if (result == null) Left(DecodingFailure(s"Unrecognized subtype $cse", c.history))
             else Right(result)
           }
         }
@@ -549,11 +551,11 @@ private[circe] trait Codecs {
 
             override def apply(c: HCursor): Decoder.Result[Z] = {
               c.keys.flatMap(_.headOption) match {
-                case None        => Left(DecodingFailure("Missing subtype", c.history))
+                case None        => Left(DecodingFailure("Missing subtype field", c.history))
                 case Some(field) =>
                   val decoder = cases.get(field)
                   if (decoder == null)
-                    Left(DecodingFailure(s"Unrecognized subtype: $field", c.history))
+                    Left(DecodingFailure(s"Unrecognized subtype $field", c.history))
                   else
                     c.get(field)(decoder).map(_.asInstanceOf[Z])
               }
@@ -569,15 +571,15 @@ private[circe] trait Codecs {
 
             override def apply(c: HCursor): Decoder.Result[Z] = {
               c.downField(name).success match {
-                case None         => Left(DecodingFailure(s"Missing subtype: $name", c.history))
+                case None         => Left(DecodingFailure(MissingField, DownField(name) +: c.history))
                 case Some(cursor) =>
                   cursor.as[String] match {
                     case Left(_)    =>
-                      Left(DecodingFailure(s"Malformed subtype: ${cursor.value.noSpaces}", cursor.history))
+                      Left(DecodingFailure(WrongTypeExpectation("string", cursor.value), cursor.history))
                     case Right(cse) =>
                       val decoder = cases.get(cse)
                       if (decoder == null)
-                        Left(DecodingFailure(s"Unrecognized subtype: $cse", cursor.history))
+                        Left(DecodingFailure(s"Unrecognized subtype $cse", cursor.history))
                       else c.as(decoder).map(_.asInstanceOf[Z])
                   }
               }
@@ -731,11 +733,11 @@ private[circe] trait Codecs {
               case Right(value) =>
                 val prev = map.put(field, value)
                 if (prev != null)
-                  throw DecodingFailure(s"Duplicate field: $field", c.history)
+                  throw DecodingFailure(s"Duplicate field $field", DownField(key) +: c.history)
             }
           } else {
             if (rejectExtraFields && !discriminator.contains(key))
-              throw DecodingFailure(s"Unexpected field: $key", c.history)
+              throw DecodingFailure("Unexpected extra field", DownField(key) +: c.history)
           }
         }
 
@@ -758,7 +760,7 @@ private[circe] trait Codecs {
                     case collection: Schema.Collection[_, _] if !explicitEmptyCollections => collection.empty
                     case _: Schema.Optional[_] if !explicitNulls                          => None
                     case _                                                                =>
-                      throw DecodingFailure(s"Missing field: $name", c.history)
+                      throw DecodingFailure(MissingField, DownField(name) +: c.history)
                   }
                 }
               },
@@ -823,21 +825,21 @@ private[circe] trait Codecs {
         discriminator match {
           case None       =>
             c.value.asObject match {
-              case None      => throw DecodingFailure("Expected object", c.history)
+              case None      => throw DecodingFailure(WrongTypeExpectation("object", c.value), c.history)
               case Some(obj) =>
                 obj.keys.foreach { key =>
-                  throw DecodingFailure(s"Extra field: $key", c.history)
+                  throw DecodingFailure(s"Unexpected extra field", DownField(key) +: c.history)
                 }
             }
           case Some(name) =>
             c.keys.getOrElse(Seq.empty).foreach { key =>
               if (key != name && rejectExtraFields)
-                throw DecodingFailure(s"Extra field: $key", c.history)
+                throw DecodingFailure(s"Unexpected extra field", DownField(key) +: c.history)
               c.get[String](key) match {
-                case Left(error)  => throw DecodingFailure("Expected string", error.history)
+                case Left(error)  => throw DecodingFailure(WrongTypeExpectation("string", c.value), error.history)
                 case Right(value) =>
                   if (value != schema.id.name)
-                    throw DecodingFailure(s"Expected ${schema.id.name}", c.history)
+                    throw DecodingFailure(s"Unexpected subtype $value, expected ${schema.id.name}", DownField(key) +: c.history)
               }
             }
         }
@@ -1188,14 +1190,14 @@ private[circe] trait Codecs {
           aliases.getOrDefault(key, -1) match {
             case -1                =>
               if (rejectExtraFields)
-                throw DecodingFailure(s"Extra field: $key", c.history)
+                throw DecodingFailure("Unexpected extra field", DownField(key) +: c.history)
             case idx if idx == len => // check discriminator?
             case idx               =>
               val field = names(idx)
-              if (buffer(idx) != null) throw DecodingFailure(s"Duplicate field: $field", c.history)
+              if (buffer(idx) != null) throw DecodingFailure(s"Duplicate field $field", DownField(key) +: c.history)
               else
                 c.get(key)(decoders(idx)) match {
-                  case Left(value)  => throw DecodingFailure(s"Failed to decode field: $field", c.history)
+                  case Left(error)  => throw error
                   case Right(value) => buffer(idx) = value
                 }
           }
@@ -1216,7 +1218,7 @@ private[circe] trait Codecs {
                 case collection: Schema.Collection[_, _] if !explicitEmptyCollections => buffer(i) = collection.empty
                 case _: Schema.Optional[_] if !explicitNulls                          => buffer(i) = None
                 case _                                                                =>
-                  throw DecodingFailure(s"Missing field: ${names(i)}", c.history)
+                  throw DecodingFailure(MissingField, DownField(names(i)) +: c.history)
               }
             }
           }

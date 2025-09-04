@@ -2,7 +2,7 @@ package zio.schema.codec.circe
 
 import io.circe._
 import zio.schema._
-import zio.schema.codec.circe.internal.{Codecs, Configuration => InternalConfiguration, JsonSplitter}
+import zio.schema.codec.circe.internal.{Codecs, Configuration => InternalConfiguration, ErrorHandler, JsonSplitter}
 import zio.schema.codec.{BinaryCodec, DecodeError}
 import zio.stream.ZPipeline
 import zio.{Cause, Chunk}
@@ -150,7 +150,7 @@ object CirceCodec {
         parser
           .decode[A](new String(whole.toArray, StandardCharsets.UTF_8))
           .left
-          .map(failure => DecodeError.ReadError(Cause.fail(failure), failure.getMessage))
+          .map(ErrorHandler.handle)
 
       override def streamDecoder: ZPipeline[Any, DecodeError, Byte, A] =
         ZPipeline.fromChannel {
@@ -159,7 +159,7 @@ object CirceCodec {
           (if (config.treatStreamsAsArrays) JsonSplitter.splitJsonArrayElements
            else JsonSplitter.splitOnJsonBoundary) >>>
           ZPipeline.mapEitherChunked { (json: String) =>
-            parser.decode[A](json).left.map(error => DecodeError.ReadError(Cause.fail(error), error.getMessage))
+            parser.decode[A](json).left.map(ErrorHandler.handle)
           }
     }
 
@@ -193,7 +193,7 @@ object CirceCodec {
         CirceDecoder
           .decode(schema, new String(whole.toArray, StandardCharsets.UTF_8), config)
           .left
-          .map(e => DecodeError.ReadError(Cause.fail(e), e.getMessage))
+          .map(ErrorHandler.handle)
 
       override def streamDecoder: ZPipeline[Any, DecodeError, Byte, A] =
         ZPipeline.utfDecode.mapError(cce => DecodeError.ReadError(Cause.fail(cce), cce.getMessage)) >>>
@@ -203,7 +203,7 @@ object CirceCodec {
             CirceDecoder
               .decode(schema, json, config)
               .left
-              .map(error => DecodeError.ReadError(Cause.fail(error), error.getMessage))
+              .map(ErrorHandler.handle)
           }
     }
 
