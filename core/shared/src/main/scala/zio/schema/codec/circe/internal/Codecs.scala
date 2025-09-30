@@ -61,10 +61,16 @@ private[circe] trait Codecs {
     }
   }
 
+  def decodeUUID: Decoder[java.util.UUID] = Decoder.decodeString.emap { str =>
+    try Right(java.util.UUID.fromString(str))
+    catch {
+      case _: IllegalArgumentException => Left(s"$str is not a valid UUID")
+    }
+  }
+
   def decodeCurrency: Decoder[java.util.Currency] = Decoder.decodeString.emap { str =>
-    try {
-      Right(java.util.Currency.getInstance(str))
-    } catch {
+    try Right(java.util.Currency.getInstance(str))
+    catch {
       case iae: IllegalArgumentException => Left(s"$str is not a valid currency: ${iae.getMessage}")
     }
   }
@@ -120,7 +126,7 @@ private[circe] trait Codecs {
     case StandardType.CharType           => Decoder.decodeChar
     case StandardType.BigIntegerType     => Decoder.decodeBigInt.map(_.underlying)
     case StandardType.BigDecimalType     => Decoder.decodeBigDecimal.map(_.underlying)
-    case StandardType.UUIDType           => Decoder.decodeUUID
+    case StandardType.UUIDType           => decodeUUID
     case StandardType.DayOfWeekType      => Decoder.decodeString.emap(parseJavaTime(java.time.DayOfWeek.valueOf, _))
     case StandardType.DurationType       => Decoder.decodeDuration
     case StandardType.InstantType        => Decoder.decodeInstant

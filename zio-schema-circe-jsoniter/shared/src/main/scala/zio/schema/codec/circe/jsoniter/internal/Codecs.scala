@@ -54,7 +54,7 @@ private[jsoniter] object Codecs extends zio.schema.codec.circe.internal.Codecs {
     case StandardType.CharType           => Decoder.decodeChar
     case StandardType.BigIntegerType     => CirceCodecs.bigIntC3C.map(_.underlying)
     case StandardType.BigDecimalType     => CirceCodecs.bigDecimalC3C.map(_.underlying)
-    case StandardType.UUIDType           => Decoder.decodeUUID
+    case StandardType.UUIDType           => decodeUUID
     case StandardType.DayOfWeekType      => Decoder.decodeString.emap(parseJavaTime(java.time.DayOfWeek.valueOf, _))
     case StandardType.DurationType       => CirceCodecs.durationC3C
     case StandardType.InstantType        => CirceCodecs.instantC3C
