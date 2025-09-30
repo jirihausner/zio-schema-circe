@@ -12,7 +12,6 @@ private[circe] object ErrorHandler {
       historyToPathChunk(e.history) match {
         case path if path.nonEmpty => DecodeError.ReadErrorWithPath(path, Cause.fail(error), e.message)
         case _                     => DecodeError.ReadError(Cause.fail(error), e.message)
-
       }
   }
 
@@ -49,7 +48,7 @@ private[circe] object ErrorHandler {
       if (selections.isEmpty) return Chunk.empty
       val (cb, sb)   = selections.foldRight(
         (
-          ChunkBuilder.make[String](selections.size),
+          ChunkBuilder.make[String](),
           new StringBuilder(),
         ),
       ) {
