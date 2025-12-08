@@ -22,7 +22,7 @@ jobs:
         uses: coursier/cache-action@v6
         id: coursier-cache
       - name: Setup Scala, JDK
-        uses: coursier/setup-action@v1
+        uses: coursier/setup-action@v2
         with:
           apps: sbt
       - name: Fetch dependencies
@@ -47,7 +47,7 @@ jobs:
         uses: coursier/cache-action@v6
         id: coursier-cache
       - name: Setup Scala, JDK
-        uses: coursier/setup-action@v1
+        uses: coursier/setup-action@v2
         with:
           apps: sbt
           jvm: ${{ matrix.java }}
@@ -69,7 +69,7 @@ jobs:
       - name: Restore cache
         uses: coursier/cache-action@v6
         id: coursier-cache
-      - uses: coursier/setup-action@v1
+      - uses: coursier/setup-action@v2
         with:
           jvm: temurin:21
           apps: sbt
@@ -94,7 +94,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Setup Scala, JDK
-        uses: coursier/setup-action@v1
+        uses: coursier/setup-action@v2
         with:
           apps: sbt
       - name: Run release
