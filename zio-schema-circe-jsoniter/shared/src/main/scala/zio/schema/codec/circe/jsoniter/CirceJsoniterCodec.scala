@@ -1,7 +1,7 @@
 package zio.schema.codec.circe.jsoniter
 
 import com.github.plokhotnyuk.jsoniter_scala.circe.JsoniterScalaCodec.jsonC3c
-import com.github.plokhotnyuk.jsoniter_scala.core.{JsonReaderException, readFromArray, readFromString, writeToArray}
+import com.github.plokhotnyuk.jsoniter_scala.core.{readFromArray, readFromString, writeToArray, JsonReaderException}
 import io.circe._
 import zio.schema.codec.circe.internal.{Configuration => InternalConfiguration, ErrorHandler, JsonSplitter}
 import zio.schema.codec.circe.jsoniter.internal.Codecs
