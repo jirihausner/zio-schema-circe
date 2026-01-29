@@ -167,8 +167,10 @@ object BuildHelper {
         "-P:scalanative:genStaticForwardersForNonTopLevelObjects"
       else ""
     },
-    Test / fork := crossProjectPlatform.value == JVMPlatform, // set fork to `true` on JVM to improve log readability, JS and Native need `false`
-    Test / parallelExecution := crossProjectPlatform != NativePlatform, // disable parallel execution in CI to avoid flaky tests
+    Test / fork := crossProjectPlatform.value ==
+      JVMPlatform, // set fork to `true` on JVM to improve log readability, JS and Native need `false`
+    Test / parallelExecution :=
+      crossProjectPlatform != NativePlatform, // disable parallel execution in CI to avoid flaky tests
   )
 
   def macroDefinitionSettings = Seq(
