@@ -689,7 +689,8 @@ private[circe] trait Codecs {
   }
 
   private def isEmptyOptionalValue(schema: Schema.Field[_, _], value: Any, config: Configuration) = {
-    (!config.explicitEmptyCollections.encoding || schema.optional) && (value match {
+    (!config.explicitEmptyCollections.encoding || schema.optional) &&
+    (value match {
       case None            => true
       case it: Iterable[_] => it.isEmpty
       case _               => false
@@ -775,10 +776,11 @@ private[circe] trait Codecs {
         }
 
         val builder =
-          ListMap.newBuilder[String, Any] ++= ({ // to avoid O(n) insert operations
-            import scala.collection.JavaConverters.mapAsScalaMapConverter // use deprecated class for Scala 2.12 compatibility
-            map.asScala
-          }: @scala.annotation.nowarn)
+          ListMap.newBuilder[String, Any] ++=
+            ({ // to avoid O(n) insert operations
+              import scala.collection.JavaConverters.mapAsScalaMapConverter // use deprecated class for Scala 2.12 compatibility
+              map.asScala
+            }: @scala.annotation.nowarn)
 
         Right(builder.result())
       } catch {
