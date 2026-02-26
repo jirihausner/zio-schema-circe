@@ -15,8 +15,8 @@
 In order to use this library, we need to add one of the following lines in our `build.sbt` file:
 
 ```scala
-libraryDependencies += "io.github.jirihausner" %% "zio-schema-circe"          % "0.4.7"
-libraryDependencies += "io.github.jirihausner" %% "zio-schema-circe-jsoniter" % "0.4.7"
+libraryDependencies += "io.github.jirihausner" %% "zio-schema-circe"          % "0.4.8"
+libraryDependencies += "io.github.jirihausner" %% "zio-schema-circe-jsoniter" % "0.4.8"
 ```
 
 `zio-schema-circe-jsoniter` uses [plokhotnyuk's jsoniter-scala Circe booster](https://github.com/plokhotnyuk/jsoniter-scala/tree/master/jsoniter-scala-circe) under the hood.
