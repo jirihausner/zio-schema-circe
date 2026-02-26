@@ -35,10 +35,10 @@ object BuildHelper {
 
     val circe           = "0.14.15"
     val circeDerivation = "0.13.0-M5"
-    val jsoniter        = "2.38.2"
+    val jsoniter        = "2.38.8"
     val scalaJavaTime   = "2.6.0"
-    val zio             = "2.1.21"
-    val zioSchema       = "1.7.5"
+    val zio             = "2.1.23"
+    val zioSchema       = "1.7.6"
   }
 
   def compilerOptions(scalaVersion: String, optimize: Boolean) = {
@@ -158,17 +158,16 @@ object BuildHelper {
         baseDirectory.value,
       )
     },
-    nativeConfig ~= {
-      _.withMode(Mode.releaseFast)
-        .withLTO(LTO.none)
-    },
+    nativeConfig ~= { _.withMode(Mode.releaseFast) },
     scalacOptions += {
       if (crossProjectPlatform.value == NativePlatform)
         "-P:scalanative:genStaticForwardersForNonTopLevelObjects"
       else ""
     },
-    Test / fork := crossProjectPlatform.value == JVMPlatform, // set fork to `true` on JVM to improve log readability, JS and Native need `false`
-    Test / parallelExecution := crossProjectPlatform != NativePlatform, // disable parallel execution in CI to avoid flaky tests
+    Test / fork := crossProjectPlatform.value ==
+      JVMPlatform, // set fork to `true` on JVM to improve log readability, JS and Native need `false`
+    Test / parallelExecution :=
+      crossProjectPlatform != NativePlatform, // disable parallel execution in CI to avoid flaky tests
   )
 
   def macroDefinitionSettings = Seq(
@@ -214,7 +213,10 @@ object BuildHelper {
         }
       },
       ThisBuild / semanticdbEnabled := scalaVersion.value != Scala3,
-      ThisBuild / semanticdbOptions += "-P:semanticdb:synthetics:on",
+      ThisBuild / semanticdbOptions ++= {
+        if (scalaVersion.value != Scala3) List("-P:semanticdb:synthetics:on")
+        else List.empty
+      },
       ThisBuild / semanticdbVersion := scalafixSemanticdb.revision,
       ThisBuild / scalafixDependencies ++= List(
         "com.github.vovapolu"                      %% "scaluzzi" % "0.1.23",
