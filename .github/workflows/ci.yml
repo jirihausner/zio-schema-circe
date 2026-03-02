@@ -19,7 +19,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Restore cache
-        uses: coursier/cache-action@v7
+        uses: coursier/cache-action@v8
         id: coursier-cache
       - name: Setup Scala, JDK
         uses: coursier/setup-action@v2
@@ -44,7 +44,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Restore cache
-        uses: coursier/cache-action@v7
+        uses: coursier/cache-action@v8
         id: coursier-cache
       - name: Setup Scala, JDK
         uses: coursier/setup-action@v2
@@ -67,7 +67,7 @@ jobs:
       - name: Fetch tags
         run: git fetch --depth=300 origin +refs/tags/*:refs/tags/*
       - name: Restore cache
-        uses: coursier/cache-action@v7
+        uses: coursier/cache-action@v8
         id: coursier-cache
       - uses: coursier/setup-action@v2
         with:
