@@ -744,6 +744,70 @@ private[circe] trait EncoderSpecs extends StringUtils {
           """{"NumberOne":{"value":"foo"}}""",
         )
       },
+      test("nested") {
+        assertEncodes(
+          NestedEnum.schema,
+          NestedEnum.Case, { // NOTE: discrepancy in nested enum schema derivation between Scala 2 and Scala 3
+            if (TestVersion.isScala3)
+              """{"Enum":"Case"}"""
+            else """"Case""""
+          },
+        )
+      },
+      test("deeply nested") {
+        assertEncodes(
+          DeeplyNestedEnum.schema,
+          DeeplyNestedEnum.CaseA, { // NOTE: discrepancy in nested enum schema derivation between Scala 2 and Scala 3
+            if (TestVersion.isScala3)
+              """{"DeepEnumA":{"EnumA":"CaseA"}}"""
+            else """"CaseA""""
+          },
+        ) &&
+        assertEncodes(
+          DeeplyNestedEnum.schema,
+          DeeplyNestedEnum.CaseB, { // NOTE: discrepancy in nested enum schema derivation between Scala 2 and Scala 3
+            if (TestVersion.isScala3)
+              """{"DeepEnumB":{"EnumB":"CaseB"}}"""
+            else """"CaseB""""
+          },
+        )
+      },
+      test("hierarchial") {
+        assertEncodes(
+          HierarchialEnum.schema,
+          HierarchialEnum
+            .CaseA("value"), { // NOTE: discrepancy in nested enum schema derivation between Scala 2 and Scala 3
+            if (TestVersion.isScala3)
+              """{"EnumA":{"CaseA":{"value":"value"}}}"""
+            else """{"CaseA":{"value":"value"}}"""
+          },
+        ) &&
+        assertEncodes(
+          HierarchialEnum.schema,
+          HierarchialEnum.CaseB, { // NOTE: discrepancy in nested enum schema derivation between Scala 2 and Scala 3
+            if (TestVersion.isScala3)
+              """{"EnumB":{"CaseB":{}}}"""
+            else """{"CaseB":{}}"""
+          },
+        ) &&
+        assertEncodes(
+          HierarchialEnum.schema,
+          HierarchialEnum
+            .DeepCaseA("value"), { // NOTE: discrepancy in nested enum schema derivation between Scala 2 and Scala 3
+            if (TestVersion.isScala3)
+              """{"EnumA":{"DeepEnumA":{"DeepCaseA":{"value":"value"}}}}"""
+            else """{"DeepCaseA":{"value":"value"}}"""
+          },
+        ) &&
+        assertEncodes(
+          HierarchialEnum.schema,
+          HierarchialEnum.DeepCaseB, { // NOTE: discrepancy in nested enum schema derivation between Scala 2 and Scala 3
+            if (TestVersion.isScala3)
+              """{"EnumB":{"DeepEnumB":"DeepCaseB"}}"""
+            else """{"DeepCaseB":{}}"""
+          },
+        )
+      },
     ),
     suite("dynamic direct mapping")(
       test("record") {

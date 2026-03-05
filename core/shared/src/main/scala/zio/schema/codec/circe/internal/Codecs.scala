@@ -321,7 +321,7 @@ private[circe] trait Codecs {
         new KeyDecoder[A] {
           val cases = new util.HashMap[String, A](caseNameAliases.size << 1)
           caseNameAliases.foreach { case (name, case_) =>
-            cases.put(format(name, config), case_.schema.asInstanceOf[Schema.CaseClass0[A]].defaultConstruct())
+            cases.put(format(name, config), constructEnumCase(case_))
           }
 
           def apply(key: String): Option[A] = Option(cases.get(key))
@@ -459,12 +459,23 @@ private[circe] trait Codecs {
     caseNameAliases
   }
 
+  private def constructEnumCase[Z, A](case_ : Schema.Case[Z, A]): Z =
+    case_.schema match {
+      case s: Schema.CaseClass0[A] => case_.construct(s.defaultConstruct())
+      case s: Schema.Enum[A]       =>
+        s.defaultValue match {
+          case Right(value) => case_.construct(value)
+          case Left(error)  => throw new RuntimeException(s"Cannot construct enum case ${case_.id}: $error")
+        }
+      case other                   =>
+        throw new RuntimeException(
+          s"Unsupported case schema type for ${case_.id}: ${other.getClass.getSimpleName}",
+        )
+    }
+
   private def caseMap[Z](schema: Schema.Enum[Z], config: Configuration): Map[Z, String] =
     schema.nonTransientCases
-      .map(case_ =>
-        case_.schema.asInstanceOf[Schema.CaseClass0[Z]].defaultConstruct() ->
-          format(case_.caseName, config),
-      )
+      .map(case_ => constructEnumCase(case_) -> format(case_.caseName, config))
       .toMap
 
   def encodeEnum[Z](schema: Schema.Enum[Z], config: Configuration): Encoder[Z] = {
@@ -515,7 +526,7 @@ private[circe] trait Codecs {
 
         val cases = new util.HashMap[String, Z](caseNameAliases.size << 1)
         caseNameAliases.foreach { case (name, case_) =>
-          cases.put(format(name, config), case_.schema.asInstanceOf[Schema.CaseClass0[Z]].defaultConstruct())
+          cases.put(format(name, config), constructEnumCase(case_))
         }
 
         override def apply(c: HCursor): Decoder.Result[Z] = {
