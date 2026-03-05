@@ -309,6 +309,13 @@ private[circe] trait DecoderSpecs extends StringUtils {
           )
         }
       },
+      test("fails when empty") {
+        assertDecodesToError(
+          Schema.nonEmptyChunk(Schema.Primitive(StandardType.StringType)),
+          """[]""",
+          DecodingFailure("NonEmptyChunk expected", Nil),
+        )
+      },
     ),
     suite("map")(
       test("of simple keys and values") {
@@ -366,21 +373,21 @@ private[circe] trait DecoderSpecs extends StringUtils {
           """{"0":{"first":0,"second":true},"1":{"first":1,"second":false}}""",
           NonEmptyMap(0 -> Value(0, true), 1 -> Value(1, false)),
         )
-      },
+      } @@ ignore,                // FIXME: find better test, NonEmptyMap ordering is non-deterministic
       test("of simple keys and values where the key's schema is lazy") {
         assertDecodes(
           Schema.nonEmptyMap[Int, Value](Schema.defer(Schema[Int]), Schema[Value]),
           """{"0":{"first":0,"second":true},"1":{"first":1,"second":false}}""",
           NonEmptyMap(0 -> Value(0, true), 1 -> Value(1, false)),
         )
-      },
+      } @@ ignore,                // FIXME: find better test, NonEmptyMap ordering is non-deterministic
       test("of complex keys and values") {
         assertDecodes(
           Schema.nonEmptyMap[Key, Value],
           """[[{"name":"a","index":0},{"first":0,"second":true}],[{"name":"b","index":1},{"first":1,"second":false}]]""",
           NonEmptyMap(Key("a", 0) -> Value(0, true), Key("b", 1) -> Value(1, false)),
         )
-      },
+      } @@ ignore,                // FIXME: find better test, NonEmptyMap ordering is non-deterministic
       test("of complex keys with transformation to primitive keys") {
         assertDecodes(
           Schema.nonEmptyMap[KeyWrapper, ValueWrapper],
@@ -390,8 +397,15 @@ private[circe] trait DecoderSpecs extends StringUtils {
             KeyWrapper("wrapped_key_2") -> ValueWrapper(value = "some_other_value"),
           ),
         )
+      } @@ ignore,                // FIXME: find better test, NonEmptyMap ordering is non-deterministic
+      test("fails when empty") {
+        assertDecodesToError(
+          Schema.nonEmptyMap(Schema.Primitive(StandardType.StringType), Schema.Primitive(StandardType.StringType)),
+          """{}""",
+          DecodingFailure("NonEmptyMap expected", Nil),
+        )
       },
-    ) @@ ignore, // FIXME: find better test, NonEmptyMap ordering is non-deterministic
+    ),
     suite("set")(
       test("of primitives") {
         check(Gen.setOf(Gen.string)) { set =>
@@ -1122,7 +1136,7 @@ private[circe] trait DecoderSpecs extends StringUtils {
       test("vector") {
         assertDecodes(Schema[VectorWrapper], """{}""", VectorWrapper(Vector.empty))
       },
-      test("chunck") {
+      test("chunk") {
         assertDecodes(Schema[ChunkWrapper], """{}""", ChunkWrapper(Chunk.empty))
       },
     ),

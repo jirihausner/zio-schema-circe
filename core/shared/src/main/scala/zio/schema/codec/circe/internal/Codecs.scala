@@ -234,7 +234,8 @@ private[circe] trait Codecs {
     case Schema.Optional(codec, _)         => Decoder.decodeOption(decodeSchema(codec, config))
     case Schema.Tuple2(left, right, _) => Decoder.decodeTuple2(decodeSchema(left, config), decodeSchema(right, config))
     case Schema.Sequence(codec, f, _, _, _)             => decodeChunk(decodeSchema(codec, config)).map(f)
-    case s @ Schema.NonEmptySequence(codec, _, _, _, _) => decodeChunk(decodeSchema(codec, config)).map(s.fromChunk)
+    case s @ Schema.NonEmptySequence(codec, _, _, _, _) =>
+      decodeChunk(decodeSchema(codec, config)).emap(c => s.fromChunkOption(c).toRight(s"${s.identity} expected"))
     case Schema.Map(ks, vs, _)                          => decodeMap(ks, vs, config)
     case Schema.NonEmptyMap(ks, vs, _)                  =>
       decodeMap(ks, vs, config).emap(m => NonEmptyMap.fromMapOption(m).toRight("NonEmptyMap expected"))
