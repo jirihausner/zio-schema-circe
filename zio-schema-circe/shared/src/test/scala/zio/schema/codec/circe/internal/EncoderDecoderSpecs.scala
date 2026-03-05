@@ -174,11 +174,11 @@ private[circe] trait EncoderDecoderSpecs {
         assertEncodesThenDecodes(Schema[DeeplyNestedEnum], DeeplyNestedEnum.CaseA) &&
         assertEncodesThenDecodes(Schema[DeeplyNestedEnum], DeeplyNestedEnum.CaseB)
       },
-      test("hierarchial") {
-        assertEncodesThenDecodes(Schema[HierarchialEnum], HierarchialEnum.CaseA("value")) &&
-        assertEncodesThenDecodes(Schema[HierarchialEnum], HierarchialEnum.CaseB) &&
-        assertEncodesThenDecodes(Schema[HierarchialEnum], HierarchialEnum.DeepCaseA("value")) &&
-        assertEncodesThenDecodes(Schema[HierarchialEnum], HierarchialEnum.DeepCaseB)
+      test("hierarchical") {
+        assertEncodesThenDecodes(Schema[HierarchicalEnum], HierarchicalEnum.CaseA("value")) &&
+        assertEncodesThenDecodes(Schema[HierarchicalEnum], HierarchicalEnum.CaseB) &&
+        assertEncodesThenDecodes(Schema[HierarchicalEnum], HierarchicalEnum.DeepCaseA("value")) &&
+        assertEncodesThenDecodes(Schema[HierarchicalEnum], HierarchicalEnum.DeepCaseB)
       },
     ),
   )

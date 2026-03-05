@@ -821,20 +821,20 @@ protected[circe] object Data {
 
     sealed trait DeepEnumA extends DeeplyNestedEnum
     sealed trait DeepEnumB extends DeeplyNestedEnum
-    sealed trait EnumA extends DeepEnumA
-    sealed trait EnumB extends DeepEnumB
-    case object CaseA  extends EnumA
-    case object CaseB  extends EnumB
+    sealed trait EnumA     extends DeepEnumA
+    sealed trait EnumB     extends DeepEnumB
+    case object CaseA      extends EnumA
+    case object CaseB      extends EnumB
 
     implicit val schema: Schema[DeeplyNestedEnum] = DeriveSchema.gen
   }
 
-  sealed trait HierarchialEnum
+  sealed trait HierarchicalEnum
 
-  object HierarchialEnum {
+  object HierarchicalEnum {
 
-    sealed trait EnumA                  extends HierarchialEnum
-    sealed trait EnumB                  extends HierarchialEnum
+    sealed trait EnumA                  extends HierarchicalEnum
+    sealed trait EnumB                  extends HierarchicalEnum
     sealed trait DeepEnumA              extends EnumA
     sealed trait DeepEnumB              extends EnumB
     case class CaseA(value: String)     extends EnumA
@@ -842,6 +842,6 @@ protected[circe] object Data {
     case class DeepCaseA(value: String) extends DeepEnumA
     case object DeepCaseB               extends DeepEnumB
 
-    implicit val schema: Schema[HierarchialEnum] = DeriveSchema.gen
+    implicit val schema: Schema[HierarchicalEnum] = DeriveSchema.gen
   }
 }

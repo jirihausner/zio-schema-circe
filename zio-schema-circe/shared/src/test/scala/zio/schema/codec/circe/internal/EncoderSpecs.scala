@@ -772,10 +772,10 @@ private[circe] trait EncoderSpecs extends StringUtils {
           },
         )
       },
-      test("hierarchial") {
+      test("hierarchical") {
         assertEncodes(
-          HierarchialEnum.schema,
-          HierarchialEnum
+          HierarchicalEnum.schema,
+          HierarchicalEnum
             .CaseA("value"), { // NOTE: discrepancy in nested enum schema derivation between Scala 2 and Scala 3
             if (TestVersion.isScala3)
               """{"EnumA":{"CaseA":{"value":"value"}}}"""
@@ -783,16 +783,16 @@ private[circe] trait EncoderSpecs extends StringUtils {
           },
         ) &&
         assertEncodes(
-          HierarchialEnum.schema,
-          HierarchialEnum.CaseB, { // NOTE: discrepancy in nested enum schema derivation between Scala 2 and Scala 3
+          HierarchicalEnum.schema,
+          HierarchicalEnum.CaseB, { // NOTE: discrepancy in nested enum schema derivation between Scala 2 and Scala 3
             if (TestVersion.isScala3)
               """{"EnumB":{"CaseB":{}}}"""
             else """{"CaseB":{}}"""
           },
         ) &&
         assertEncodes(
-          HierarchialEnum.schema,
-          HierarchialEnum
+          HierarchicalEnum.schema,
+          HierarchicalEnum
             .DeepCaseA("value"), { // NOTE: discrepancy in nested enum schema derivation between Scala 2 and Scala 3
             if (TestVersion.isScala3)
               """{"EnumA":{"DeepEnumA":{"DeepCaseA":{"value":"value"}}}}"""
@@ -800,8 +800,8 @@ private[circe] trait EncoderSpecs extends StringUtils {
           },
         ) &&
         assertEncodes(
-          HierarchialEnum.schema,
-          HierarchialEnum.DeepCaseB, { // NOTE: discrepancy in nested enum schema derivation between Scala 2 and Scala 3
+          HierarchicalEnum.schema,
+          HierarchicalEnum.DeepCaseB, { // NOTE: discrepancy in nested enum schema derivation between Scala 2 and Scala 3
             if (TestVersion.isScala3)
               """{"EnumB":{"DeepEnumB":"DeepCaseB"}}"""
             else """{"DeepCaseB":{}}"""

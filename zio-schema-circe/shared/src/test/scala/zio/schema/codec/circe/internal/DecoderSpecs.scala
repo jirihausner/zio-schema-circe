@@ -1113,38 +1113,38 @@ private[circe] trait DecoderSpecs extends StringUtils {
           DeeplyNestedEnum.CaseB,
         )
       },
-      test("hierarchial") {
+      test("hierarchical") {
         assertDecodes(
-          HierarchialEnum.schema, { // NOTE: discrepancy in nested enum schema derivation between Scala 2 and Scala 3
+          HierarchicalEnum.schema, { // NOTE: discrepancy in nested enum schema derivation between Scala 2 and Scala 3
             if (TestVersion.isScala3)
               """{"EnumA":{"CaseA":{"value":"value"}}}"""
             else """{"CaseA":{"value":"value"}}"""
           },
-          HierarchialEnum.CaseA("value"),
+          HierarchicalEnum.CaseA("value"),
         ) &&
         assertDecodes(
-          HierarchialEnum.schema, { // NOTE: discrepancy in nested enum schema derivation between Scala 2 and Scala 3
+          HierarchicalEnum.schema, { // NOTE: discrepancy in nested enum schema derivation between Scala 2 and Scala 3
             if (TestVersion.isScala3)
               """{"EnumB":{"CaseB":{}}}"""
             else """{"CaseB":{}}"""
           },
-          HierarchialEnum.CaseB,
+          HierarchicalEnum.CaseB,
         ) &&
         assertDecodes(
-          HierarchialEnum.schema, { // NOTE: discrepancy in nested enum schema derivation between Scala 2 and Scala 3
+          HierarchicalEnum.schema, { // NOTE: discrepancy in nested enum schema derivation between Scala 2 and Scala 3
             if (TestVersion.isScala3)
               """{"EnumA":{"DeepEnumA":{"DeepCaseA":{"value":"value"}}}}"""
             else """{"DeepCaseA":{"value":"value"}}"""
           },
-          HierarchialEnum.DeepCaseA("value"),
+          HierarchicalEnum.DeepCaseA("value"),
         ) &&
         assertDecodes(
-          HierarchialEnum.schema, { // NOTE: discrepancy in nested enum schema derivation between Scala 2 and Scala 3
+          HierarchicalEnum.schema, { // NOTE: discrepancy in nested enum schema derivation between Scala 2 and Scala 3
             if (TestVersion.isScala3)
               """{"EnumB":{"DeepEnumB":"DeepCaseB"}}"""
             else """{"DeepCaseB":{}}"""
           },
-          HierarchialEnum.DeepCaseB,
+          HierarchicalEnum.DeepCaseB,
         )
       },
     ),
