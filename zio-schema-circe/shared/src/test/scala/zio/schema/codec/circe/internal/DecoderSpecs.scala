@@ -316,6 +316,13 @@ private[circe] trait DecoderSpecs extends StringUtils {
           DecodingFailure("NonEmptyChunk expected", Nil),
         )
       },
+      test("fails with left when field with non-empty chunk is missing") {
+        assertDecodesToError(
+          WithNonEmptyChunk.schema,
+          """{}""",
+          DecodingFailure(MissingField, List(DownField("items"))),
+        )
+      },
     ),
     suite("map")(
       test("of simple keys and values") {

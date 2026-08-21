@@ -775,8 +775,11 @@ private[circe] trait Codecs {
                     case _                 =>
                   }
                   schema match {
-                    case collection: Schema.Collection[_, _] if !explicitEmptyCollections => collection.empty
                     case _: Schema.Optional[_] if !explicitNulls                          => None
+                    case collection: Schema.Collection[_, _] if !explicitEmptyCollections =>
+                      collection.defaultValue.getOrElse {
+                        throw DecodingFailure(MissingField, DownField(name) +: c.history)
+                      }
                     case _                                                                =>
                       throw DecodingFailure(MissingField, DownField(name) +: c.history)
                   }
@@ -1233,9 +1236,12 @@ private[circe] trait Codecs {
                 case l: Schema.Lazy[_] => schema = l.schema
                 case _                 =>
               }
-              schema match {
-                case collection: Schema.Collection[_, _] if !explicitEmptyCollections => buffer(i) = collection.empty
-                case _: Schema.Optional[_] if !explicitNulls                          => buffer(i) = None
+              buffer(i) = schema match {
+                case _: Schema.Optional[_] if !explicitNulls                          => None
+                case collection: Schema.Collection[_, _] if !explicitEmptyCollections =>
+                  collection.defaultValue.getOrElse {
+                    throw DecodingFailure(MissingField, DownField(names(i)) +: c.history)
+                  }
                 case _                                                                =>
                   throw DecodingFailure(MissingField, DownField(names(i)) +: c.history)
               }

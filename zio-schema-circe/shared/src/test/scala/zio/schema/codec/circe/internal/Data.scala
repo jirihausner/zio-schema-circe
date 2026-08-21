@@ -844,4 +844,10 @@ protected[circe] object Data {
 
     implicit val schema: Schema[HierarchicalEnum] = DeriveSchema.gen
   }
+
+  case class WithNonEmptyChunk(items: NonEmptyChunk[String])
+
+  object WithNonEmptyChunk {
+    implicit val schema: Schema[WithNonEmptyChunk] = DeriveSchema.gen
+  }
 }
