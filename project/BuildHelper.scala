@@ -213,6 +213,7 @@ object BuildHelper {
           case _                       => List.empty
         }
       },
+      versionScheme                 := Some("early-semver"),
       ThisBuild / semanticdbEnabled := scalaVersion.value != Scala3,
       ThisBuild / semanticdbOptions ++= {
         if (scalaVersion.value != Scala3) List("-P:semanticdb:synthetics:on")
