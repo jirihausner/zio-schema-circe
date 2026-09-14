@@ -27,9 +27,9 @@ object BuildHelper {
 
   val Scala212: String = versions("2.12")
   val Scala213: String = versions("2.13")
-  val Scala3: String   = versions("3.3")
+  val Scala3: String   = versions("3.9")
 
-  val BinCompatVersionToCompare: Option[String] = Some("0.4.0")
+  val BinCompatVersionToCompare: Option[String] = None
 
   object Versions {
 
@@ -38,7 +38,7 @@ object BuildHelper {
     val jsoniter        = "2.40.1"
     val scalaJavaTime   = "2.7.0"
     val zio             = "2.1.26"
-    val zioSchema       = "1.8.7"
+    val zioSchema       = "1.9.0"
   }
 
   def compilerOptions(scalaVersion: String, optimize: Boolean) = {
@@ -81,7 +81,8 @@ object BuildHelper {
       case Some((3, _))  =>
         Seq(
           "-Xignore-scala2-macros",
-          "-Ykind-projector",
+          "-Xkind-projector",
+          "-source:3.3",
         )
       case Some((2, 13)) =>
         Seq(
