@@ -25,7 +25,7 @@ jobs:
         uses: coursier/cache-action@v8.1.1
         id: coursier-cache
       - name: Setup Scala, JDK
-        uses: coursier/setup-action@v3.0.2
+        uses: coursier/setup-action@v3.0.3
         with:
           apps: sbt
       - name: Fetch dependencies
@@ -51,7 +51,7 @@ jobs:
         uses: coursier/cache-action@v8.1.1
         id: coursier-cache
       - name: Setup Scala, JDK
-        uses: coursier/setup-action@v3.0.2
+        uses: coursier/setup-action@v3.0.3
         with:
           apps: sbt
           jvm: ${{ matrix.java }}
@@ -74,7 +74,7 @@ jobs:
         uses: coursier/cache-action@v8.1.1
         id: coursier-cache
       - name: Setup Scala, JDK
-        uses: coursier/setup-action@v3.0.2
+        uses: coursier/setup-action@v3.0.3
         with:
           jvm: temurin:21
           apps: sbt
@@ -99,7 +99,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Setup Scala, JDK
-        uses: coursier/setup-action@v3.0.2
+        uses: coursier/setup-action@v3.0.3
         with:
           apps: sbt
       - name: Run release
